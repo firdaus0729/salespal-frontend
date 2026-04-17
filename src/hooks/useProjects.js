@@ -12,6 +12,17 @@ export function useProjects() {
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
 
+    const normalizeProject = useCallback((project) => {
+        if (!project) return project;
+        const metadata = project.metadata || {};
+        return {
+            ...project,
+            website: project.website || metadata.website || '',
+            createdAt: project.createdAt || project.created_at,
+            updatedAt: project.updatedAt || project.updated_at,
+        };
+    }, []);
+
     const fetchProjects = useCallback(async () => {
         if (!orgId) {
             setProjects([]);
@@ -24,14 +35,14 @@ export function useProjects() {
 
         try {
             const data = await api.get('/projects?status=active');
-            setProjects(data || []);
+            setProjects((data || []).map(normalizeProject));
         } catch (err) {
             console.error('Error fetching projects:', err);
             setError(err.message);
         } finally {
             setLoading(false);
         }
-    }, [orgId]);
+    }, [orgId, normalizeProject]);
 
     useEffect(() => {
         fetchProjects();
@@ -41,7 +52,13 @@ export function useProjects() {
         if (!orgId) return { data: null, error: 'No organization' };
 
         try {
-            const data = await api.post('/projects', { name: projectData.name });
+            const payload = {
+                name: projectData.name,
+                industry: projectData.industry || null,
+                description: projectData.description || null,
+                website: projectData.website || null,
+            };
+            const data = normalizeProject(await api.post('/projects', payload));
             setProjects(prev => [data, ...prev]);
             return { data, error: null };
         } catch (err) {
@@ -52,7 +69,13 @@ export function useProjects() {
 
     const updateProject = async (projectId, updates) => {
         try {
-            const data = await api.put(`/projects/${projectId}`, updates);
+            const payload = {
+                ...(updates.name !== undefined ? { name: updates.name } : {}),
+                ...(updates.industry !== undefined ? { industry: updates.industry } : {}),
+                ...(updates.description !== undefined ? { description: updates.description } : {}),
+                ...(updates.website !== undefined ? { website: updates.website } : {}),
+            };
+            const data = normalizeProject(await api.put(`/projects/${projectId}`, payload));
             setProjects(prev => prev.map(p => p.id === projectId ? data : p));
             return { data, error: null };
         } catch (err) {

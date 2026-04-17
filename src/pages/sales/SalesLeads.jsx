@@ -1,5 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { useSales } from '../../context/SalesContext';
+import { useToast } from '../../components/ui/Toast';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
@@ -61,6 +62,7 @@ const StatusBadge = ({ status }) => {
 /* ─── Main Component ─────────────────────────────────────────── */
 const SalesLeads = () => {
 const { leads, updateLeadStatus, addActionToLead, addLead } = useSales();
+    const { showToast } = useToast();
     const navigate = useNavigate();
     const location = useLocation();
 
@@ -79,6 +81,73 @@ const [showAddLead, setShowAddLead] = useState(false);
     const [newLeadForm, setNewLeadForm] = useState({ name: '', phone: '', email: '', campaign: '' });
     const [addingLead, setAddingLead] = useState(false);
     const [addError, setAddError] = useState('');
+
+    const handleSubmitNewLead = async (e) => {
+        e.preventDefault();
+        if (addingLead) return;
+
+        const payload = {
+            name: newLeadForm.name.trim(),
+            phone: newLeadForm.phone.trim(),
+            email: newLeadForm.email.trim(),
+            campaign: newLeadForm.campaign.trim(),
+            source: 'Manual',
+            status: 'New',
+        };
+
+        if (!payload.name || !payload.phone) {
+            setAddError('Name and phone are required.');
+            return;
+        }
+        const cleanedPhone = payload.phone.replace(/[^\d+]/g, '').replace(/^\+/, '');
+        if (!/^\d{7,15}$/.test(cleanedPhone)) {
+            setAddError('Phone number must be 7 to 15 digits.');
+            return;
+        }
+        if (payload.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(payload.email)) {
+            setAddError('Please enter a valid email address.');
+            return;
+        }
+
+        setAddingLead(true);
+        setAddError('');
+        try {
+            await addLead(payload);
+            setNewLeadForm({ name: '', phone: '', email: '', campaign: '' });
+            setShowAddLead(false);
+            showToast({
+                title: 'Lead added',
+                description: `${payload.name} was added successfully.`,
+                variant: 'success',
+            });
+        } catch (err) {
+            setAddError(err?.message || 'Failed to add lead. Please try again.');
+            showToast({
+                title: 'Failed to add lead',
+                description: err?.message || 'Please check the form and try again.',
+                variant: 'error',
+            });
+        } finally {
+            setAddingLead(false);
+        }
+    };
+
+    const handleStatusChange = async (leadId, nextStatus) => {
+        const ok = await updateLeadStatus(leadId, nextStatus);
+        if (ok) {
+            showToast({
+                title: 'Status updated',
+                description: `Lead status changed to ${nextStatus}.`,
+                variant: 'success',
+            });
+        } else {
+            showToast({
+                title: 'Status update failed',
+                description: 'Could not save status change. Please retry.',
+                variant: 'error',
+            });
+        }
+    };
 
     /* ─── Filter + Search + Sort ─── */
     const displayedLeads = useMemo(() => {
@@ -301,17 +370,14 @@ const [showAddLead, setShowAddLead] = useState(false);
                             </div>
 
                             <form
-                                onSubmit={(e) => {
-                                    e.preventDefault();
-                                    if (newLeadForm.name.trim() && newLeadForm.phone.trim()) {
-                                        // Trigger add action via SalesContext if available
-                                        // For now, just clear the form and close
-                                        setNewLeadForm({ name: '', phone: '', email: '', campaign: '' });
-                                        setShowAddLead(false);
-                                    }
-                                }}
+                                onSubmit={handleSubmitNewLead}
                                 className="p-6 space-y-4"
                             >
+                                {addError && (
+                                    <div className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
+                                        {addError}
+                                    </div>
+                                )}
                                 <div>
                                     <label className="text-xs font-bold text-gray-500 uppercase tracking-wide block mb-1.5">Name</label>
                                     <input
@@ -356,17 +422,20 @@ const [showAddLead, setShowAddLead] = useState(false);
                                 <div className="flex items-center gap-2 pt-3">
                                     <button
                                         type="button"
-                                        onClick={() => setShowAddLead(false)}
+                                        onClick={() => {
+                                            setShowAddLead(false);
+                                            setAddError('');
+                                        }}
                                         className="flex-1 px-4 py-2 text-sm font-semibold text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg border border-gray-200 transition-colors"
                                     >
                                         Cancel
                                     </button>
                                     <button
                                         type="submit"
-                                        disabled={!newLeadForm.name.trim() || !newLeadForm.phone.trim()}
+                                        disabled={!newLeadForm.name.trim() || !newLeadForm.phone.trim() || addingLead}
                                         className="flex-1 px-4 py-2 text-sm font-semibold text-white bg-blue-600 hover:bg-blue-700 rounded-lg transition-colors disabled:opacity-60 disabled:cursor-not-allowed inline-flex items-center justify-center gap-2"
                                     >
-                                        <Plus size={14} /> Add Lead
+                                        <Plus size={14} /> {addingLead ? 'Adding...' : 'Add Lead'}
                                     </button>
                                 </div>
                             </form>
@@ -384,7 +453,10 @@ const [showAddLead, setShowAddLead] = useState(false);
                     <p className="text-gray-500 mt-1 text-sm">Hover any row for quick actions · Click a row to open the full lead workspace</p>
                 </div>
                 <button
-                    onClick={() => setShowAddLead(true)}
+                    onClick={() => {
+                        setAddError('');
+                        setShowAddLead(true);
+                    }}
                     className="inline-flex items-center gap-2 px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold rounded-lg transition-colors shrink-0"
                 >
                     <Plus size={16} /> Add Lead
@@ -510,7 +582,7 @@ const [showAddLead, setShowAddLead] = useState(false);
                                     <td className="py-3.5 px-4 whitespace-nowrap" onClick={e => e.stopPropagation()}>
                                         <select
                                             value={lead.status}
-                                            onChange={e => updateLeadStatus(lead.id, e.target.value)}
+                                            onChange={e => handleStatusChange(lead.id, e.target.value)}
                                             className={`text-xs font-semibold rounded-full px-2.5 py-1 border-0 appearance-none cursor-pointer focus:outline-none focus:ring-2 focus:ring-blue-400 ${(STATUS_CONFIG[lead.status] || STATUS_CONFIG.New).bg} ${(STATUS_CONFIG[lead.status] || STATUS_CONFIG.New).text}`}
                                         >
                                             {STATUSES.map(s => (

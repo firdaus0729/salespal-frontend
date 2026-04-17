@@ -70,6 +70,20 @@ const StepReviewLaunch = ({ onLaunch, onBack, data }) => {
     const [publishResults, setPublishResults] = useState(null);
     const [isPublishing, setIsPublishing] = useState(false);
 
+    const analysis = data?.analysisData || {};
+    const chosenCampaign = data?.adSettings?.chosenCampaign || {};
+    const businessName = analysis?.businessName || analysis?.tags?.[0] || 'Business';
+    const businessIndustry = analysis?.businessSignals?.industry || analysis?.industry || 'General';
+    const businessLocation = analysis?.businessSignals?.location || 'Global';
+    const website = data?.websiteUrl || analysis?.website || '';
+    const adHeadline = chosenCampaign?.headlines?.[0] || chosenCampaign?.campaignName || chosenCampaign?.campaignTitle || 'Untitled ad';
+    const adPrimaryText = chosenCampaign?.primaryText || chosenCampaign?.descriptions?.[0] || 'No ad copy provided yet.';
+    const adPlatforms = (data?.adSettings?.platforms || detectedPlatforms).map((p) => {
+        const key = p === 'facebook' ? 'meta' : p;
+        return REVIEW_PLATFORM_REGISTRY[key]?.name || p;
+    });
+    const adPreviewImage = chosenCampaign?.image || chosenCampaign?.imageUrl || null;
+
     // DEBUG: Remove after testing
     console.log('[StepReviewLaunch] Guard Debug:', {
         platforms: campaign.platforms,
@@ -184,10 +198,16 @@ const StepReviewLaunch = ({ onLaunch, onBack, data }) => {
                             <Building2 className="w-8 h-8 text-gray-400" />
                         </div>
                         <div className="space-y-1">
-                            <h4 className="font-medium text-gray-900">Premium Coffee Co.</h4>
-                            <p className="text-sm text-gray-600">e-Commerce • Food &amp; Beverage</p>
-                            <p className="text-sm text-gray-600">Mumbai, India</p>
-                            <a href="#" className="text-xs text-blue-600 hover:underline">premiumcoffee.com</a>
+                            <h4 className="font-medium text-gray-900">{businessName}</h4>
+                            <p className="text-sm text-gray-600">{businessIndustry}</p>
+                            <p className="text-sm text-gray-600">{businessLocation}</p>
+                            {website ? (
+                                <a href={website} target="_blank" rel="noreferrer" className="text-xs text-blue-600 hover:underline">
+                                    {website}
+                                </a>
+                            ) : (
+                                <span className="text-xs text-gray-400">No website provided</span>
+                            )}
                         </div>
                     </div>
                 </div>
@@ -196,12 +216,16 @@ const StepReviewLaunch = ({ onLaunch, onBack, data }) => {
                 <div>
                     <SectionHeader title="Target Audience" />
                     <div className="flex flex-wrap gap-2">
-                        <span className="px-3 py-1 bg-gray-100 text-gray-700 text-xs font-medium rounded-full">Age: 25 - 45</span>
-                        <span className="px-3 py-1 bg-gray-100 text-gray-700 text-xs font-medium rounded-full">Urban Professionals</span>
-                        <span className="px-3 py-1 bg-gray-100 text-gray-700 text-xs font-medium rounded-full">Coffee Lovers</span>
-                        <span className="px-3 py-1 bg-gray-100 text-gray-700 text-xs font-medium rounded-full">High Intent</span>
+                        {(analysis?.tags || []).slice(0, 4).map((tag, i) => (
+                            <span key={i} className="px-3 py-1 bg-gray-100 text-gray-700 text-xs font-medium rounded-full">{tag}</span>
+                        ))}
+                        {(!analysis?.tags || analysis.tags.length === 0) && (
+                            <span className="px-3 py-1 bg-gray-100 text-gray-700 text-xs font-medium rounded-full">General Audience</span>
+                        )}
                     </div>
-                    <p className="mt-3 text-sm text-gray-500">AI has identified this segment as high-potential based on your product offering.</p>
+                    <p className="mt-3 text-sm text-gray-500">
+                        {analysis?.targetAudience?.description || 'Audience inferred from your business analysis and selected platforms.'}
+                    </p>
                 </div>
 
                 <div className="lg:col-span-2 h-px bg-gray-100" />
@@ -210,16 +234,22 @@ const StepReviewLaunch = ({ onLaunch, onBack, data }) => {
                 <div>
                     <SectionHeader title="Ad Creative" />
                     <div className="bg-gray-50 rounded-xl p-4 border border-gray-200 flex gap-4">
-                        <div className="w-20 h-24 bg-gray-200 rounded-lg shrink-0 flex items-center justify-center">
-                            <Layout className="w-8 h-8 text-gray-400" />
-                        </div>
+                        {adPreviewImage ? (
+                            <img src={adPreviewImage} alt="Ad creative" className="w-20 h-24 object-cover rounded-lg shrink-0 border border-gray-200" />
+                        ) : (
+                            <div className="w-20 h-24 bg-gray-200 rounded-lg shrink-0 flex items-center justify-center">
+                                <Layout className="w-8 h-8 text-gray-400" />
+                            </div>
+                        )}
                         <div className="space-y-1 overflow-hidden">
                             <div className="flex items-center gap-2 mb-1">
-                                <span className="text-[10px] font-bold uppercase tracking-wider text-blue-700 bg-blue-50 px-1.5 py-0.5 rounded">Meta &amp; Google</span>
+                                <span className="text-[10px] font-bold uppercase tracking-wider text-blue-700 bg-blue-50 px-1.5 py-0.5 rounded">
+                                    {adPlatforms.join(' + ') || 'No platform selected'}
+                                </span>
                             </div>
-                            <h4 className="font-medium text-gray-900 text-sm truncate">Luxury Living in South Mumbai</h4>
-                            <p className="text-xs text-gray-500 line-clamp-2">Experience the pinnacle of luxury with our new sea-facing apartments. World-class amenities and...</p>
-                            <p className="text-xs font-medium text-gray-700 mt-1">CTA: Request a Tour</p>
+                            <h4 className="font-medium text-gray-900 text-sm truncate">{adHeadline}</h4>
+                            <p className="text-xs text-gray-500 line-clamp-2">{adPrimaryText}</p>
+                            <p className="text-xs font-medium text-gray-700 mt-1">CTA: {chosenCampaign?.cta || 'Learn More'}</p>
                         </div>
                     </div>
                 </div>

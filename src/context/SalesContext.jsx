@@ -12,7 +12,6 @@ export const useSales = () => {
     return context;
 };
 
-// Map backend deals to frontend lead interface
 const initialLeads = [
     {
         id: '1',
@@ -112,6 +111,68 @@ const initialLeads = [
     }
 ];
 
+const stageToUiStatus = (stage) => {
+    const value = String(stage || '').toLowerCase();
+    if (value === 'contacted') return 'Contacted';
+    if (value === 'qualified') return 'Warm';
+    if (value === 'proposal') return 'Hot';
+    if (value === 'closed_won') return 'Converted';
+    if (value === 'closed_lost') return 'Lost';
+    return 'New';
+};
+
+const uiStatusToStage = (status) => {
+    const value = String(status || '').toLowerCase();
+    if (value === 'contacted') return 'contacted';
+    if (value === 'warm') return 'qualified';
+    if (value === 'hot') return 'proposal';
+    if (value === 'converted' || value === 'won') return 'closed_won';
+    if (value === 'lost' || value === 'closed') return 'closed_lost';
+    return 'new';
+};
+
+const priorityToScore = (priority, fallbackScore) => {
+    if (typeof fallbackScore === 'number') return fallbackScore;
+    const value = String(priority || '').toLowerCase();
+    if (value === 'high') return 85;
+    if (value === 'medium') return 60;
+    return 35;
+};
+
+const normalizePhone = (phone) => String(phone || '').replace(/[^\d+]/g, '').trim();
+const isValidPhone = (phone) => /^\d{7,15}$/.test(normalizePhone(phone).replace(/^\+/, ''));
+const isValidEmail = (email) => !email || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(email).trim());
+
+const mapLeadRecord = (lead) => {
+    const firstName = (lead.contact_first_name || '').trim();
+    const lastName = (lead.contact_last_name || '').trim();
+    const fullName = `${firstName} ${lastName}`.trim() || 'Unknown Contact';
+    const status = stageToUiStatus(lead.stage);
+    const aiScore = priorityToScore(lead.priority, lead.ai_score);
+    const metadata = lead.metadata || {};
+
+    return {
+        id: lead.id,
+        name: fullName,
+        phone: lead.contact_phone || 'No phone',
+        email: lead.contact_email || '',
+        source: lead.source || metadata.source || 'Manual',
+        project: metadata.projectName || 'Default Project',
+        campaign: metadata.campaignName || lead.company_name || 'General Lead',
+        status,
+        aiScore,
+        dealProbability: typeof lead.value === 'number' && lead.value > 0 ? 80 : 30,
+        scoreLabel: status === 'Hot' ? 'Hot' : status === 'Warm' ? 'Warm' : 'Cold',
+        lastInteraction: metadata.lastInteraction || 'Lead created',
+        assignedTo: lead.assigned_to || 'Unassigned',
+        createdDate: lead.created_at || new Date().toISOString(),
+        rawDeal: lead,
+        timeline: [],
+        communications: [],
+        followups: [],
+    };
+};
+
 export const SalesProvider = ({ children }) => {
     const { user } = useAuth();
     const [leads, setLeads] = useState([]);
@@ -122,30 +183,11 @@ export const SalesProvider = ({ children }) => {
         setLoading(true);
         try {
             const data = await api.get('/sales');
-            const mapped = data.map(deal => ({
-                id: deal.id,
-                name: `${deal.contact_first_name || ''} ${deal.contact_last_name || ''}`.trim() || 'Unknown Contact',
-                phone: deal.contact_email || 'No Contact Data',
-                source: deal.metadata?.source || 'API/Web',
-                project: 'Default Project',
-                campaign: deal.title,
-                status: deal.stage === 'closed_won' ? 'Hot' : deal.stage === 'lead' ? 'Warm' : 'Cold',
-                aiScore: deal.priority === 'high' ? 95 : deal.priority === 'medium' ? 60 : 30,
-                dealProbability: deal.value > 0 ? 80 : 30,
-                scoreLabel: deal.priority || 'medium',
-                lastInteraction: 'Updated from DB',
-                assignedTo: deal.assigned_to || 'Unassigned',
-                createdDate: deal.created_at,
-                rawDeal: deal,
-                timeline: [],
-                communications: [],
-                followups: []
-            }));
+            const mapped = (Array.isArray(data) ? data : []).map(mapLeadRecord);
             setLeads(mapped);
         } catch (err) {
             console.error('Error fetching deals:', err);
-            // Fallback to initial mock if API is not populated for UI preview
-            setLeads(prev => prev.length === 0 ? initialLeads : prev);
+            setLeads(prev => (prev.length === 0 ? initialLeads : prev));
         } finally {
             setLoading(false);
         }
@@ -156,26 +198,64 @@ export const SalesProvider = ({ children }) => {
     }, [fetchLeads]);
 
     const addLead = async (leadData) => {
-        // Optimistic UI update could be applied here
+        const fullName = String(leadData?.name || '').trim();
+        const phone = normalizePhone(leadData?.phone || '');
+        const email = String(leadData?.email || '').trim().toLowerCase();
+        if (!fullName || !phone) {
+            throw new Error('Name and phone are required.');
+        }
+        if (!isValidPhone(phone)) {
+            throw new Error('Phone number must be 7 to 15 digits.');
+        }
+        if (!isValidEmail(email)) {
+            throw new Error('Please enter a valid email address.');
+        }
+
+        const [firstName, ...lastNameParts] = fullName.split(/\s+/);
+        const lastName = lastNameParts.join(' ').trim();
+        const normalizedStatus = leadData?.status || 'New';
+        const normalizedAiScore = Number(leadData?.aiScore || 0);
+        const priority = normalizedAiScore >= 80 ? 'high' : normalizedAiScore >= 50 ? 'medium' : 'low';
+
         try {
-            const newDeal = await api.post('/sales', {
-                title: leadData.campaign || 'New Lead',
-                stage: leadData.status === 'Hot' ? 'negotiation' : 'lead',
-                priority: leadData.aiScore > 80 ? 'high' : 'medium'
+            const createdLead = await api.post('/sales', {
+                title: fullName,
+                contact_first_name: firstName,
+                contact_last_name: lastName || null,
+                contact_phone: phone,
+                contact_email: email || null,
+                company_name: leadData?.campaign?.trim() || null,
+                source: leadData?.source || 'Manual',
+                stage: uiStatusToStage(normalizedStatus),
+                priority,
+                ai_score: normalizedAiScore > 0 ? normalizedAiScore : null,
+                metadata: {
+                    campaignName: leadData?.campaign?.trim() || null,
+                    projectName: leadData?.project?.trim() || null,
+                },
             });
-            await fetchLeads(); // refresh
-            return newDeal;
+            const mappedLead = mapLeadRecord(createdLead);
+            setLeads((prev) => [mappedLead, ...prev]);
+            return mappedLead;
         } catch (err) {
             console.error('Error adding lead:', err);
-            return null;
+            throw err;
         }
     };
 
     const updateLeadStatus = async (leadId, newStatus) => {
-        // Optimistic
+        const previous = leads;
         setLeads(prev => prev.map(lead =>
             lead.id === leadId ? { ...lead, status: newStatus } : lead
         ));
+        try {
+            await api.put(`/sales/${leadId}`, { stage: uiStatusToStage(newStatus) });
+            return true;
+        } catch (err) {
+            console.error('Error updating lead status:', err);
+            setLeads(previous);
+            return false;
+        }
     };
 
     const addActionToLead = (leadId, type, action, detail, additionalData = {}) => {

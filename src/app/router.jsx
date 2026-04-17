@@ -104,6 +104,8 @@ import MarketingSettingsLayout from '../pages/marketing/settings/MarketingSettin
 import MarketingSettingsIntegrations from '../pages/marketing/settings/MarketingSettingsIntegrations';
 import MetaIntegration from '../pages/marketing/settings/MetaIntegration';
 import GoogleIntegration from '../pages/marketing/settings/GoogleIntegration';
+import InstagramIntegration from '../pages/marketing/settings/InstagramIntegration';
+import LinkedInIntegration from '../pages/marketing/settings/LinkedInIntegration';
 import GoogleIntegrationCallback from '../pages/marketing/settings/GoogleIntegrationCallback';
 import {
     MarketingSettingsDefaults,
@@ -403,8 +405,9 @@ export const router = createBrowserRouter([
                                     { path: "integrations", element: <MarketingSettingsIntegrations /> },
                                     { path: "integrations/meta", element: <MetaIntegration /> },
                                     { path: "integrations/google", element: <GoogleIntegration /> },
+                                    { path: "integrations/instagram", element: <InstagramIntegration /> },
+                                    { path: "integrations/linkedin", element: <LinkedInIntegration /> },
                                     { path: "integrations/google/callback", element: <GoogleIntegrationCallback /> },
-                                    { path: "integrations/linkedin", element: <MetaIntegration /> },
                                     { path: "defaults", element: <MarketingSettingsDefaults /> },
                                     { path: "tracking", element: <MarketingSettingsTracking /> },
                                     { path: "notifications", element: <MarketingSettingsNotifications /> },

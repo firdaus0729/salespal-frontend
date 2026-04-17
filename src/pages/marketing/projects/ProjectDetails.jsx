@@ -30,6 +30,8 @@ export default function ProjectDetails() {
     const [isEditModalOpen, setIsEditModalOpen] = useState(false);
     const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
     const [editData, setEditData] = useState({ name: '', industry: '', website: '' });
+    const [editUrlError, setEditUrlError] = useState('');
+    const [editSubmitError, setEditSubmitError] = useState('');
 
     // Campaign Modals state
     const [isCampaignDeleteModalOpen, setIsCampaignDeleteModalOpen] = useState(false);
@@ -77,10 +79,38 @@ export default function ProjectDetails() {
         }
     }, [project]);
 
-    const handleUpdateProject = (e) => {
+    const normalizeWebsiteUrl = (raw) => {
+        const value = String(raw || '').trim();
+        if (!value) return null;
+        const withScheme = /^https?:\/\//i.test(value) ? value : `https://${value}`;
+        try {
+            const parsed = new URL(withScheme);
+            const host = parsed.hostname.toLowerCase();
+            if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return null;
+            if (host !== 'localhost' && !host.includes('.')) return null;
+            return `${parsed.protocol}//${parsed.host}${parsed.pathname}${parsed.search}${parsed.hash}`;
+        } catch {
+            return null;
+        }
+    };
+
+    const handleUpdateProject = async (e) => {
         e.preventDefault();
-        updateProject(projectId, editData);
-        setIsEditModalOpen(false);
+        const normalizedWebsite = normalizeWebsiteUrl(editData.website);
+        if (!normalizedWebsite) {
+            setEditUrlError('Please enter a valid website URL (e.g., example.com).');
+            return;
+        }
+        setEditUrlError('');
+        setEditSubmitError('');
+        try {
+            const updated = await updateProject(projectId, { ...editData, website: normalizedWebsite });
+            if (!updated?.id) throw new Error('Failed to update project.');
+            setProject(updated);
+            setIsEditModalOpen(false);
+        } catch (err) {
+            setEditSubmitError(err?.message || 'Could not save project changes.');
+        }
     };
 
     const handleDeleteProject = () => {
@@ -215,7 +245,7 @@ export default function ProjectDetails() {
                             <DetailMetric 
                                 label="Target Website" 
                                 value={project.website ? (
-                                    <a href={`https://${project.website.replace('https://', '')}`} target="_blank" rel="noreferrer" className="text-blue-600 hover:text-blue-800 flex items-center gap-1">
+                                    <a href={project.website} target="_blank" rel="noreferrer" className="text-blue-600 hover:text-blue-800 flex items-center gap-1">
                                         {project.website} <ExternalLink size={12} />
                                     </a>
                                 ) : '—'} 
@@ -264,9 +294,17 @@ export default function ProjectDetails() {
                     <Input
                         label="Website"
                         value={editData.website}
-                        onChange={(e) => setEditData({ ...editData, website: e.target.value })}
+                        onChange={(e) => {
+                            setEditData({ ...editData, website: e.target.value });
+                            if (editUrlError) setEditUrlError('');
+                            if (editSubmitError) setEditSubmitError('');
+                        }}
                         required
+                        error={editUrlError}
                     />
+                    {editSubmitError && (
+                        <p className="text-sm text-red-600">{editSubmitError}</p>
+                    )}
                     <div className="pt-4 flex justify-between items-center border-t border-gray-100 mt-6">
                         <Button type="button" variant="destructive" onClick={() => { setIsEditModalOpen(false); setIsDeleteModalOpen(true); }}>
                             Delete Project

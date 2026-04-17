@@ -41,7 +41,7 @@ const MarketingSettingsIntegrations = () => {
             description: 'Connect Instagram Business profiles for organic posts and analytics.',
             icon: Instagram,
             path: 'instagram',
-            supportsOAuth: false,
+            supportsOAuth: true,
         },
         {
             id: 'linkedin',
@@ -49,7 +49,7 @@ const MarketingSettingsIntegrations = () => {
             description: 'Manage B2B campaigns and audiences on LinkedIn.',
             icon: Linkedin,
             path: 'linkedin',
-            supportsOAuth: false,
+            supportsOAuth: true,
         },
     ];
 
@@ -78,7 +78,7 @@ const MarketingSettingsIntegrations = () => {
     };
 
     const handleManage = (item) => {
-        const implementedManagePages = ['meta', 'google'];
+        const implementedManagePages = ['meta', 'google', 'instagram', 'linkedin'];
         if (implementedManagePages.includes(item.id)) {
             navigate(item.path);
         } else {
@@ -169,7 +169,7 @@ const MarketingSettingsIntegrations = () => {
                                         onClick={() =>
                                             item.supportsOAuth
                                                 ? handleOAuthConnect(item.id)
-                                                : alert(`${item.name} OAuth coming soon.`)
+                                                : null
                                         }
                                         isLoading={connectingId === item.id}
                                         className="w-full md:w-auto justify-center"

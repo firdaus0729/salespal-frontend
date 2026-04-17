@@ -117,7 +117,7 @@ const SocialOverview = () => {
                     {channels.map(channel => (
                         <Card
                             key={channel.id}
-                            className={`flex items-center p-4 gap-4 ${!channel.connected ? 'opacity-60' : ''}`}
+                            className="flex items-center p-4 gap-4"
                         >
                             <div className={`w-10 h-10 ${channel.iconBg} text-white rounded-lg flex items-center justify-center`}>
                                 <channel.icon className="w-6 h-6" />
@@ -129,12 +129,13 @@ const SocialOverview = () => {
                             {channel.connected ? (
                                 <div className="w-2 h-2 bg-green-500 rounded-full shrink-0" title="Connected"></div>
                             ) : (
-                                <Link
-                                    to={`/settings/integrations/${channel.integrationId}`}
-                                    className="text-xs font-medium text-blue-600 hover:text-blue-800 whitespace-nowrap"
+                                <button
+                                    type="button"
+                                    onClick={() => navigate(`/settings/integrations/${channel.integrationId}`)}
+                                    className="text-xs font-semibold text-blue-600 hover:text-blue-800 whitespace-nowrap underline underline-offset-2"
                                 >
                                     Connect
-                                </Link>
+                                </button>
                             )}
                         </Card>
                     ))}

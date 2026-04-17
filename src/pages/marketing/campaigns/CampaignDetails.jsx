@@ -172,28 +172,31 @@ export default function CampaignDetails() {
     const cvr = rawClicks > 0 ? (rawConversions / rawClicks) * 100 : 0;
     const cpc = rawClicks > 0 ? rawSpend / rawClicks : 0;
     const cpm = rawImpressions > 0 ? (rawSpend / rawImpressions) * 1000 : 0;
-    const frequency = campaign.frequency || 1.4;
+    const frequency = Number(campaign.frequency || 0);
 
     const health = getCampaignHealth(roasValue, cpaValue, rawSpend, rawRevenue);
 
-    const efficiencyTrend = [
-        { day: 'Mon', roas: 2.1, cpa: 45 },
-        { day: 'Tue', roas: 2.3, cpa: 42 },
-        { day: 'Wed', roas: 1.9, cpa: 48 },
-        { day: 'Thu', roas: 2.5, cpa: 38 },
-        { day: 'Fri', roas: 2.8, cpa: 35 },
-        { day: 'Sat', roas: 2.6, cpa: 40 },
-        { day: 'Sun', roas: roasValue.toFixed(1), cpa: cpaValue.toFixed(0) },
-    ];
+    const efficiencyTrend = [{
+        day: 'Today',
+        roas: Number(roasValue.toFixed(2)),
+        cpa: Number(cpaValue.toFixed(2)),
+    }];
 
-    const creatives = [
-        { id: 1, name: 'Ad Variant A', spend: 3200, ctr: 2.1, cvr: 4.5, conversions: 12, cpa: 267 },
-        { id: 2, name: 'Ad Variant B', spend: 5800, ctr: 3.2, cvr: 6.1, conversions: 28, cpa: 207 },
-        { id: 3, name: 'Ad Variant C', spend: 3450, ctr: 0.8, cvr: 1.2, conversions: 5, cpa: 690 },
-    ].map(c => ({
-        ...c,
-        tag: c.cvr >= 5 ? 'winner' : c.cvr < 2 ? 'bleeder' : 'neutral'
-    })).sort((a, b) => b.conversions - a.conversions);
+    const creatives = (() => {
+        const chosen = campaign?.metadata?.chosen_campaign || null;
+        if (!chosen) return [];
+        const cvrLocal = rawClicks > 0 ? (rawConversions / rawClicks) * 100 : 0;
+        return [{
+            id: 1,
+            name: chosen.campaignName || chosen.campaignTitle || campaign.name || 'Primary Creative',
+            spend: rawSpend,
+            ctr: Number(ctr.toFixed(2)),
+            cvr: Number(cvrLocal.toFixed(2)),
+            conversions: rawConversions,
+            cpa: Number(cpaValue.toFixed(2)),
+            tag: cvrLocal >= 5 ? 'winner' : cvrLocal < 2 ? 'bleeder' : 'neutral',
+        }];
+    })();
 
     const estimatedLeads = Math.round(rawConversions * 2.5);
     const clickToLeadDrop = rawClicks > 0 ? ((rawClicks - estimatedLeads) / rawClicks * 100).toFixed(0) : 0;
@@ -396,6 +399,13 @@ export default function CampaignDetails() {
                                             </td>
                                         </tr>
                                     ))}
+                                    {creatives.length === 0 && (
+                                        <tr>
+                                            <td colSpan={7} className="px-6 py-8 text-center text-sm text-gray-500">
+                                                No creative-level data available yet. Launch and sync campaign data to view details.
+                                            </td>
+                                        </tr>
+                                    )}
                                 </tbody>
                             </table>
                         </div>

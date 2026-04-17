@@ -1,12 +1,16 @@
 import React, { useState, useEffect } from 'react';
+import { useParams } from 'react-router-dom';
 import { Globe, FileText, AlignLeft, Check, Upload, Image as ImageIcon, Loader2 } from 'lucide-react';
 import { useDropzone } from 'react-dropzone';
 import FileUploadBox from '../components/FileUploadBox';
 import Input from '../../../../components/ui/Input';
 import Textarea from '../../../../components/ui/Textarea';
 import Button from '../../../../components/ui/Button';
+import { useMarketing } from '../../../../context/MarketingContext';
 
 const StepBusinessInput = ({ onComplete, onUpdate, data, isAnalyzing }) => {
+    const { projectId } = useParams();
+    const { getProjectById } = useMarketing();
     const [activeTab, setActiveTab] = useState('description');
 
     // Form Data
@@ -34,6 +38,13 @@ const StepBusinessInput = ({ onComplete, onUpdate, data, isAnalyzing }) => {
 
     // Validation State
     const [showError, setShowError] = useState(false);
+
+    // Autofill website from project context if draft has no website yet.
+    useEffect(() => {
+        if (websiteUrl || !projectId) return;
+        const project = getProjectById(projectId);
+        if (project?.website) setWebsiteUrl(project.website);
+    }, [projectId, websiteUrl, getProjectById]);
 
     useEffect(() => {
         if (onUpdate) {

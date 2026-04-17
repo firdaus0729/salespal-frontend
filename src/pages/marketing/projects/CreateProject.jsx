@@ -7,6 +7,21 @@ import Card from '../../../components/ui/Card';
 import Input from '../../../components/ui/Input';
 import Select from '../../../components/ui/Select';
 
+function normalizeWebsiteUrl(raw) {
+    const value = String(raw || '').trim();
+    if (!value) return null;
+    const withScheme = /^https?:\/\//i.test(value) ? value : `https://${value}`;
+    try {
+        const parsed = new URL(withScheme);
+        const host = parsed.hostname.toLowerCase();
+        if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return null;
+        if (host !== 'localhost' && !host.includes('.')) return null;
+        return `${parsed.protocol}//${parsed.host}${parsed.pathname}${parsed.search}${parsed.hash}`;
+    } catch {
+        return null;
+    }
+}
+
 export default function CreateProject() {
     const navigate = useNavigate();
     const { createProject } = useMarketing();
@@ -17,26 +32,20 @@ export default function CreateProject() {
         website: ''
     });
     const [urlError, setUrlError] = useState('');
+    const [submitError, setSubmitError] = useState('');
     const [isSubmitting, setIsSubmitting] = useState(false);
 
     const handleSubmit = async (e) => {
         e.preventDefault();
 
-        let processedWebsite = formData.website.trim();
-        if (!processedWebsite) return;
-
-        // Basic domain validation
-        const urlPattern = /^(https?:\/\/)?(localhost|[\w.-]+\.[a-zA-Z]{2,})(:[0-9]{1,5})?(\/.*)?$/;
-        if (!urlPattern.test(processedWebsite)) {
+        const processedWebsite = normalizeWebsiteUrl(formData.website);
+        if (!processedWebsite) {
             setUrlError('Please enter a valid URL (e.g., example.com)');
             return;
         }
 
         setUrlError('');
-
-        if (!processedWebsite.startsWith('http://') && !processedWebsite.startsWith('https://')) {
-            processedWebsite = `https://${processedWebsite}`;
-        }
+        setSubmitError('');
 
         if (!formData.name) return;
         if (formData.industry === 'Other' && !formData.customIndustry.trim()) return;
@@ -53,9 +62,10 @@ export default function CreateProject() {
         setIsSubmitting(true);
         try {
             const newProject = await createProject(dataToSubmit);
+            if (!newProject?.id) throw new Error('Project could not be created.');
             navigate(`/marketing/projects/${newProject.id}`);
         } catch (error) {
-            console.error(error);
+            setSubmitError(error?.message || 'Failed to create project. Please try again.');
         } finally {
             setIsSubmitting(false);
         }
@@ -123,6 +133,9 @@ export default function CreateProject() {
                         required
                         error={urlError}
                     />
+                    {submitError && (
+                        <p className="text-sm text-red-600">{submitError}</p>
+                    )}
 
                     <div className="pt-4 flex justify-end gap-3">
                         <Button
