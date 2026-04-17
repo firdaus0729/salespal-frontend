@@ -295,7 +295,7 @@ export const SalesProvider = ({ children }) => {
                 const existingWaIdx = updatedCommunications.findIndex(c => c.type === 'whatsapp');
                 const newMsg = {
                     id: Date.now() + 2,
-                    sender: 'SalesRep',
+                    sender: additionalData.sender || 'SalesRep',
                     text: detail,
                     time: timeStr
                 };

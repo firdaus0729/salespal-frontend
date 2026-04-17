@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useSales } from '../../context/SalesContext';
@@ -11,6 +11,7 @@ import {
     MapPin, ExternalLink
 } from 'lucide-react';
 import api from '../../lib/api';
+import { useToast } from '../../components/ui/Toast';
 
 /* ─── Status config ─────────────────────────────────────────── */
 const STATUS_CONFIG = {
@@ -67,6 +68,7 @@ const SalesLeadWorkspace = () => {
     const { id } = useParams();
     const navigate = useNavigate();
     const { leads, updateLeadStatus, addActionToLead, assignLead } = useSales();
+    const { showToast } = useToast();
 
     const lead = useMemo(() => leads.find(l => l.id === id), [leads, id]);
 
@@ -83,13 +85,162 @@ const SalesLeadWorkspace = () => {
     const [noteText, setNoteText] = useState('');
     const [startingLiveCall, setStartingLiveCall] = useState(false);
     const [sendingWhatsApp, setSendingWhatsApp] = useState(false);
+    const [isMicMuted, setIsMicMuted] = useState(false);
+    const [isSpeakerMuted, setIsSpeakerMuted] = useState(false);
+    const [isCallActive, setIsCallActive] = useState(false);
+    const [voiceSession, setVoiceSession] = useState(null);
+    const speechRef = useRef(null);
+    const recognitionRef = useRef(null);
+    const [isListening, setIsListening] = useState(false);
+    const [lastHeardText, setLastHeardText] = useState('');
+    const [isProcessingTurn, setIsProcessingTurn] = useState(false);
+    const [aiReadiness, setAiReadiness] = useState({
+        loading: true,
+        ready: false,
+        issues: [],
+    });
 
     const openModal = (type) => {
         setWaText(''); setScheduleDate(''); setScheduleTime(''); setNoteText('');
         setModal(type);
+        if (type !== 'call') {
+            setIsCallActive(false);
+        }
+    };
+
+    const stopSpeaking = () => {
+        if (typeof window !== 'undefined' && window.speechSynthesis) {
+            window.speechSynthesis.cancel();
+        }
+        speechRef.current = null;
+    };
+
+    const speakText = (text) => {
+        if (!text || isSpeakerMuted) return;
+        if (typeof window === 'undefined' || !window.speechSynthesis || typeof window.SpeechSynthesisUtterance === 'undefined') {
+            return;
+        }
+        stopSpeaking();
+        const utterance = new window.SpeechSynthesisUtterance(text);
+        utterance.rate = 1;
+        utterance.pitch = 1;
+        utterance.volume = 1;
+        speechRef.current = utterance;
+        window.speechSynthesis.speak(utterance);
+    };
+
+    const stopListening = () => {
+        try {
+            if (recognitionRef.current) {
+                recognitionRef.current.onresult = null;
+                recognitionRef.current.onerror = null;
+                recognitionRef.current.onend = null;
+                recognitionRef.current.stop();
+            }
+        } catch (_) {
+            // no-op
+        } finally {
+            recognitionRef.current = null;
+            setIsListening(false);
+        }
+    };
+
+    const handleVoiceTurn = async (heardText) => {
+        const text = String(heardText || '').trim();
+        if (!text || !voiceSession?.conversationId || isProcessingTurn) return;
+
+        setIsProcessingTurn(true);
+        try {
+            addActionToLead(lead.id, 'call', 'Lead Spoke', text, { outcome: 'In conversation' });
+            const turn = await api.post('/ai/voice/session/turn', {
+                brandId: voiceSession.brandId,
+                leadId: voiceSession.leadId,
+                conversationId: voiceSession.conversationId,
+                text,
+            });
+
+            const reply = turn?.assistant_reply ? String(turn.assistant_reply).trim() : '';
+            if (reply) {
+                addActionToLead(lead.id, 'call', 'AI Voice Reply', reply, { outcome: 'Responded' });
+                speakText(reply);
+            }
+        } catch (err) {
+            addActionToLead(lead.id, 'call', 'AI Voice Turn Failed', err?.message || 'Could not process voice turn.');
+            showToast({
+                title: 'Voice turn failed',
+                description: err?.message || 'Could not process your speech input.',
+                variant: 'error',
+            });
+        } finally {
+            setIsProcessingTurn(false);
+        }
+    };
+
+    const startListening = async () => {
+        if (isListening || isMicMuted || !isCallActive) return;
+        if (typeof window === 'undefined') return;
+
+        const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+        if (!SpeechRecognition) {
+            showToast({
+                title: 'Speech recognition not supported',
+                description: 'This browser does not support live voice capture. Use Chrome/Edge for best results.',
+                variant: 'warning',
+            });
+            return;
+        }
+
+        try {
+            const recognition = new SpeechRecognition();
+            recognition.lang = 'en-IN';
+            recognition.interimResults = false;
+            recognition.continuous = true;
+            recognition.maxAlternatives = 1;
+
+            recognition.onresult = async (event) => {
+                const result = event.results?.[event.resultIndex];
+                const transcript = result?.[0]?.transcript?.trim() || '';
+                if (!transcript) return;
+                setLastHeardText(transcript);
+                await handleVoiceTurn(transcript);
+            };
+
+            recognition.onerror = () => {
+                setIsListening(false);
+            };
+
+            recognition.onend = () => {
+                setIsListening(false);
+                const shouldRestart = isCallActive && !isMicMuted;
+                if (shouldRestart) {
+                    setTimeout(() => {
+                        startListening();
+                    }, 300);
+                }
+            };
+
+            recognitionRef.current = recognition;
+            recognition.start();
+            setIsListening(true);
+        } catch (err) {
+            setIsListening(false);
+            showToast({
+                title: 'Mic access issue',
+                description: err?.message || 'Could not start microphone listening.',
+                variant: 'error',
+            });
+        }
     };
 
     const startLiveAICall = async () => {
+        if (!aiReadiness.ready) {
+            showToast({
+                title: 'AI is not ready',
+                description: aiReadiness.issues[0] || 'Complete AI setup in integrations first.',
+                variant: 'warning',
+            });
+            return;
+        }
         setStartingLiveCall(true);
         try {
             const response = await api.post('/ai/voice/session/start', {
@@ -98,6 +249,14 @@ const SalesLeadWorkspace = () => {
                 name: lead.name,
                 locale: 'hing',
             });
+            setVoiceSession({
+                brandId: response?.brand_id,
+                leadId: response?.lead_id,
+                conversationId: response?.conversation_id,
+            });
+            setIsCallActive(true);
+            if (response?.assistant_reply) speakText(response.assistant_reply);
+            await startListening();
             addActionToLead(
                 lead.id,
                 'call',
@@ -113,33 +272,110 @@ const SalesLeadWorkspace = () => {
                 'AI Voice Call Failed',
                 err?.message || 'Could not start AI voice call.'
             );
+            showToast({
+                title: 'Call failed',
+                description: err?.message || 'Could not start AI voice call.',
+                variant: 'error',
+            });
             setModal(null);
         } finally {
             setStartingLiveCall(false);
         }
     };
 
+    const endLiveAICall = async () => {
+        stopListening();
+        stopSpeaking();
+        setIsCallActive(false);
+        setVoiceSession(null);
+        addActionToLead(lead.id, 'call', 'AI Voice Call Ended', 'Call ended by user.', { outcome: 'Completed' });
+        setModal(null);
+    };
+
     const sendAIAssistedWhatsApp = async (rawText) => {
         const text = String(rawText || '').trim();
         if (!text) return;
+        if (!aiReadiness.ready) {
+            showToast({
+                title: 'AI is not ready',
+                description: aiReadiness.issues[0] || 'Complete AI setup in integrations first.',
+                variant: 'warning',
+            });
+            return;
+        }
         setSendingWhatsApp(true);
         try {
-            addActionToLead(lead.id, 'whatsapp', 'WhatsApp sent', text);
+            addActionToLead(lead.id, 'whatsapp', 'WhatsApp sent', text, { sender: 'SalesRep' });
             const ai = await api.post('/ai/chat', {
                 message: `Lead name: ${lead.name}\nUser message: ${text}\nGenerate a concise, professional WhatsApp reply from sales rep perspective.`,
             });
             const aiReply = ai?.response ? String(ai.response).trim() : null;
             if (aiReply) {
-                addActionToLead(lead.id, 'whatsapp', 'AI WhatsApp follow-up', aiReply);
+                addActionToLead(lead.id, 'whatsapp', 'AI WhatsApp follow-up', aiReply, { sender: 'AI' });
+                if (ai?.fallback) {
+                    showToast({
+                        title: 'AI fallback used',
+                        description: 'Primary AI service is unavailable. Using fallback response.',
+                        variant: 'warning',
+                    });
+                }
             }
             setWaText('');
-            setModal(null);
         } catch (err) {
-            addActionToLead(lead.id, 'whatsapp', 'WhatsApp send failed', err?.message || 'Failed to send WhatsApp message');
+            const fallbackReply = `Thanks for your message, ${lead.name.split(' ')[0] || 'there'}. Our team is reviewing this and will reply shortly.`;
+            addActionToLead(lead.id, 'whatsapp', 'AI WhatsApp follow-up', fallbackReply, { sender: 'AI' });
+            addActionToLead(lead.id, 'whatsapp', 'WhatsApp AI fallback', err?.message || 'AI service unavailable');
+            showToast({
+                title: 'AI chat unavailable',
+                description: 'Sent a fallback reply so the conversation can continue.',
+                variant: 'warning',
+            });
         } finally {
             setSendingWhatsApp(false);
         }
     };
+
+    useEffect(() => {
+        if (isSpeakerMuted) stopSpeaking();
+    }, [isSpeakerMuted]);
+
+    useEffect(() => {
+        return () => {
+            stopListening();
+            stopSpeaking();
+        };
+    }, []);
+
+    useEffect(() => {
+        const loadReadiness = async () => {
+            try {
+                const data = await api.get('/integrations/readiness');
+                const checks = data?.checks || {};
+                const blockers = Array.isArray(checks.blockers) ? checks.blockers : [];
+                const aiConfigured = Boolean(checks.aiApiConfigured);
+                setAiReadiness({
+                    loading: false,
+                    ready: aiConfigured && blockers.length === 0,
+                    issues: blockers.length > 0 ? blockers : (aiConfigured ? [] : ['AI API key is not configured.']),
+                });
+            } catch (err) {
+                setAiReadiness({
+                    loading: false,
+                    ready: false,
+                    issues: [err?.message || 'Could not verify AI readiness.'],
+                });
+            }
+        };
+        loadReadiness();
+    }, []);
+
+    useEffect(() => {
+        if (!isCallActive || isMicMuted) {
+            stopListening();
+            return;
+        }
+        startListening();
+    }, [isCallActive, isMicMuted]);
 
     if (!lead) {
         return (
@@ -194,15 +430,47 @@ const SalesLeadWorkspace = () => {
                                         <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
                                         Connecting AI Agent...
                                     </div>
+                                {isCallActive && (
+                                    <div className="mt-3 text-xs text-blue-100/90">
+                                        {isProcessingTurn
+                                            ? 'Processing your speech...'
+                                            : isListening
+                                                ? 'Listening... speak naturally.'
+                                                : 'Mic idle'}
+                                        {lastHeardText ? ` | Heard: "${lastHeardText}"` : ''}
+                                    </div>
+                                )}
                                 </div>
                                 <div className="flex justify-center gap-6 pb-10">
-                                    <button className="w-12 h-12 bg-white/10 hover:bg-white/20 rounded-full flex items-center justify-center text-white/70 hover:text-white transition-colors"><Mic size={22} /></button>
-                                    <button onClick={startLiveAICall}
+                                    <button
+                                        onClick={() => setIsMicMuted(prev => !prev)}
+                                        className={`w-12 h-12 rounded-full flex items-center justify-center transition-colors ${isMicMuted ? 'bg-red-500/80 text-white' : 'bg-white/10 hover:bg-white/20 text-white/70 hover:text-white'}`}
+                                        title={isMicMuted ? 'Unmute microphone' : 'Mute microphone'}
+                                    >
+                                        <Mic size={22} />
+                                    </button>
+                                    <button
+                                        onClick={isCallActive ? endLiveAICall : startLiveAICall}
                                         disabled={startingLiveCall}
                                         className="w-16 h-16 bg-red-500 hover:bg-red-600 rounded-full flex items-center justify-center shadow-lg shadow-red-500/30 transition-transform hover:scale-105">
                                         <Phone size={26} className="rotate-[135deg]" />
                                     </button>
-                                    <button className="w-12 h-12 bg-white/10 hover:bg-white/20 rounded-full flex items-center justify-center text-white/70 hover:text-white transition-colors"><Volume2 size={22} /></button>
+                                    <button
+                                        onClick={() => setIsSpeakerMuted(prev => !prev)}
+                                        className={`w-12 h-12 rounded-full flex items-center justify-center transition-colors ${isSpeakerMuted ? 'bg-red-500/80 text-white' : 'bg-white/10 hover:bg-white/20 text-white/70 hover:text-white'}`}
+                                        title={isSpeakerMuted ? 'Enable speaker' : 'Mute speaker'}
+                                    >
+                                        <Volume2 size={22} />
+                                    </button>
+                                </div>
+                                <div className="pb-6 px-8 flex justify-center">
+                                    <button
+                                        onClick={endLiveAICall}
+                                        disabled={!isCallActive && !voiceSession}
+                                        className="text-xs font-semibold px-4 py-2 rounded-full border border-white/20 text-white/80 hover:bg-white/10 disabled:opacity-40 disabled:cursor-not-allowed"
+                                    >
+                                        End Call
+                                    </button>
                                 </div>
                             </div>
                         )}
@@ -220,7 +488,7 @@ const SalesLeadWorkspace = () => {
                                 </div>
                                 <div className="flex-1 bg-[#ECE5DD] p-4 flex flex-col gap-2 min-h-[180px] overflow-y-auto">
                                     {waHistory.length > 0 ? waHistory.map(msg => (
-                                        <div key={msg.id} className={`max-w-[80%] ${msg.sender === 'AI' || msg.sender === 'SalesRep' ? 'self-end bg-[#DCF8C6] rounded-tr-none' : 'self-start bg-white rounded-tl-none'} p-2.5 rounded-xl shadow-sm text-sm text-gray-800`}>
+                                        <div key={msg.id} className={`max-w-[80%] ${msg.sender === 'AI' ? 'self-start bg-white rounded-tl-none' : 'self-end bg-[#DCF8C6] rounded-tr-none'} p-2.5 rounded-xl shadow-sm text-sm text-gray-800`}>
                                             {msg.attachment && <p className="text-xs font-semibold text-blue-600 mb-1">📎 {msg.attachment}</p>}
                                             <p>{msg.text}</p>
                                             <p className="text-[10px] text-gray-400 text-right mt-0.5">{msg.time}</p>
@@ -358,16 +626,37 @@ const SalesLeadWorkspace = () => {
                                 </span>
                             </div>
                             <p className="text-sm text-gray-500 mt-0.5">{lead.phone} · {lead.source} · {lead.project}</p>
+                            <div className="mt-2">
+                                <span
+                                    className={`inline-flex items-center gap-1.5 text-[11px] font-semibold px-2.5 py-1 rounded-full border ${
+                                        aiReadiness.loading
+                                            ? 'bg-gray-50 text-gray-600 border-gray-200'
+                                            : aiReadiness.ready
+                                                ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                                                : 'bg-amber-50 text-amber-700 border-amber-200'
+                                    }`}
+                                    title={!aiReadiness.ready && aiReadiness.issues.length > 0 ? aiReadiness.issues.join(' | ') : 'AI services ready'}
+                                >
+                                    <span
+                                        className={`w-1.5 h-1.5 rounded-full ${
+                                            aiReadiness.loading ? 'bg-gray-400' : aiReadiness.ready ? 'bg-emerald-500' : 'bg-amber-500'
+                                        }`}
+                                    />
+                                    {aiReadiness.loading ? 'Checking AI readiness...' : aiReadiness.ready ? 'AI Ready' : 'AI Setup Required'}
+                                </span>
+                            </div>
                         </div>
                     </div>
 
                     {/* Quick Actions */}
                     <div className="flex items-center gap-2 flex-wrap">
                         <button onClick={() => openModal('call')}
+                            disabled={!aiReadiness.ready}
                             className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-semibold flex items-center gap-2 text-sm shadow-sm transition-colors">
                             <Phone size={14} /> Call
                         </button>
                         <button onClick={() => openModal('whatsapp')}
+                            disabled={!aiReadiness.ready}
                             className="px-4 py-2 bg-[#25D366] hover:bg-[#128C7E] text-white rounded-lg font-semibold flex items-center gap-2 text-sm shadow-sm transition-colors">
                             <MessageSquare size={14} /> WhatsApp
                         </button>
@@ -659,11 +948,11 @@ const SalesLeadWorkspace = () => {
                             </div>
                             <div className="flex-1 bg-[#ECE5DD] p-4 overflow-y-auto min-h-[260px] flex flex-col gap-3">
                                 {waHistory.length > 0 ? waHistory.map(msg => (
-                                    <div key={msg.id} className={`max-w-[78%] ${msg.sender === 'AI' || msg.sender === 'SalesRep' ? 'self-end' : 'self-start'}`}>
-                                        <p className={`text-[10px] font-semibold mb-0.5 ${msg.sender === 'AI' || msg.sender === 'SalesRep' ? 'text-right text-green-700' : 'text-indigo-600'}`}>
+                                    <div key={msg.id} className={`max-w-[78%] ${msg.sender === 'AI' ? 'self-start' : 'self-end'}`}>
+                                        <p className={`text-[10px] font-semibold mb-0.5 ${msg.sender === 'AI' ? 'text-indigo-600' : 'text-right text-green-700'}`}>
                                             {msg.sender === 'SalesRep' ? 'You' : msg.sender}
                                         </p>
-                                        <div className={`p-2.5 rounded-xl shadow-sm text-sm ${msg.sender === 'AI' || msg.sender === 'SalesRep' ? 'bg-[#DCF8C6] text-gray-800 rounded-tr-none' : 'bg-white text-gray-800 rounded-tl-none'}`}>
+                                        <div className={`p-2.5 rounded-xl shadow-sm text-sm ${msg.sender === 'AI' ? 'bg-white text-gray-800 rounded-tl-none' : 'bg-[#DCF8C6] text-gray-800 rounded-tr-none'}`}>
                                             {msg.attachment && (
                                                 <div className="flex items-center gap-2 mb-2 bg-blue-50 border border-blue-100 px-2.5 py-1.5 rounded-lg">
                                                     <FileText size={13} className="text-blue-500 shrink-0" />
