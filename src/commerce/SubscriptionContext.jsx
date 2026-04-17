@@ -20,6 +20,24 @@ import { MODULES } from './commerce.config';
  */
 
 const SubscriptionContext = createContext();
+const DEV_DISABLE_SUBSCRIPTIONS = String(import.meta.env.VITE_DISABLE_SUBSCRIPTIONS || '').toLowerCase() === 'true';
+
+function buildDevSubscriptions() {
+    const map = {};
+    Object.keys(MODULES).forEach((moduleKey) => {
+        map[moduleKey] = {
+            id: `dev-${moduleKey}`,
+            module: moduleKey,
+            plan: 'dev-unlocked',
+            status: 'active',
+            active: true,
+            activatedAt: new Date().toISOString(),
+            expiresAt: null,
+            limits: MODULES[moduleKey]?.limits || null,
+        };
+    });
+    return map;
+}
 
 export const SubscriptionProvider = ({ children }) => {
     const { user } = useAuth();
@@ -37,6 +55,16 @@ export const SubscriptionProvider = ({ children }) => {
             setLoading(false);
             return;
         }
+
+        // Dev override: bypass all subscription/credit checks and API dependencies.
+        if (DEV_DISABLE_SUBSCRIPTIONS) {
+            setSubscriptions(buildDevSubscriptions());
+            setCredits({ balance: 999999 });
+            setFetchedUserId(user.id);
+            setLoading(false);
+            return;
+        }
+
         setLoading(true);
 
 
@@ -81,6 +109,10 @@ export const SubscriptionProvider = ({ children }) => {
 
     const activateSubscription = useCallback(async (input) => {
         if (!user) return;
+        if (DEV_DISABLE_SUBSCRIPTIONS) {
+            setSubscriptions(buildDevSubscriptions());
+            return;
+        }
         const moduleIds = [];
 
         if (typeof input === 'string') {
@@ -110,6 +142,7 @@ export const SubscriptionProvider = ({ children }) => {
 
     const deactivateSubscription = useCallback(async (moduleId) => {
         if (!user) return;
+        if (DEV_DISABLE_SUBSCRIPTIONS) return;
         try {
             await api.post(`/billing/subscriptions/${moduleId}/deactivate`);
             await fetchAll();
@@ -120,6 +153,7 @@ export const SubscriptionProvider = ({ children }) => {
 
     const pauseSubscription = useCallback(async (moduleId) => {
         if (!user) return;
+        if (DEV_DISABLE_SUBSCRIPTIONS) return;
         try {
             await api.post(`/billing/subscriptions/${moduleId}/pause`);
             await fetchAll();
@@ -130,6 +164,7 @@ export const SubscriptionProvider = ({ children }) => {
 
     const resumeSubscription = useCallback(async (moduleId) => {
         if (!user) return;
+        if (DEV_DISABLE_SUBSCRIPTIONS) return;
         try {
             await api.post(`/billing/subscriptions/${moduleId}/resume`);
             await fetchAll();
@@ -139,6 +174,7 @@ export const SubscriptionProvider = ({ children }) => {
     }, [user, fetchAll]);
 
     const isModuleActive = useCallback((moduleId) => {
+        if (DEV_DISABLE_SUBSCRIPTIONS) return true;
         return !!subscriptions[moduleId]?.active;
     }, [subscriptions]);
 
@@ -149,6 +185,7 @@ export const SubscriptionProvider = ({ children }) => {
     // ─── Credit management ───
 
     const consume = useCallback(async (moduleId, type) => {
+        if (DEV_DISABLE_SUBSCRIPTIONS) return true;
         if (!isModuleActive(moduleId)) return false;
 
         try {
@@ -162,6 +199,7 @@ export const SubscriptionProvider = ({ children }) => {
     }, [isModuleActive]);
 
     const addCredits = useCallback(async (moduleId, resource, amount) => {
+        if (DEV_DISABLE_SUBSCRIPTIONS) return true;
 
 
         try {
@@ -181,6 +219,7 @@ export const SubscriptionProvider = ({ children }) => {
      * but are not yet used for filtering. See marketing_credits table.
      */
     const getRemaining = useCallback((_moduleId, _type) => {
+        if (DEV_DISABLE_SUBSCRIPTIONS) return 999999;
         return credits.balance;
     }, [credits.balance]);
 
@@ -189,6 +228,7 @@ export const SubscriptionProvider = ({ children }) => {
      * NOTE: Does not check per-type availability — same caveat as getRemaining.
      */
     const canConsume = useCallback((moduleId, _type) => {
+        if (DEV_DISABLE_SUBSCRIPTIONS) return true;
         return isModuleActive(moduleId) && credits.balance > 0;
     }, [isModuleActive, credits.balance]);
 
@@ -212,6 +252,7 @@ export const SubscriptionProvider = ({ children }) => {
         canConsume,
         clearCartAfterPurchase,
         refetch: fetchAll,
+        subscriptionBypassEnabled: DEV_DISABLE_SUBSCRIPTIONS,
     }), [
         subscriptions, credits, loading,
         fetchAll,
