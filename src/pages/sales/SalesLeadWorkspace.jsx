@@ -94,10 +94,15 @@ const SalesLeadWorkspace = () => {
     const [isListening, setIsListening] = useState(false);
     const [lastHeardText, setLastHeardText] = useState('');
     const [isProcessingTurn, setIsProcessingTurn] = useState(false);
+    /** Parsed from GET /integrations/readiness (calling.* only; ignores Google Ads blockers). */
     const [aiReadiness, setAiReadiness] = useState({
         loading: true,
-        ready: false,
-        issues: [],
+        /** /ai/chat — needs AI_API_KEY on backend */
+        chatReady: false,
+        /** Voice session — needs AI_API_KEY + DB tables ai_voice_sessions / ai_voice_turns */
+        voiceReady: false,
+        issuesChat: [],
+        issuesVoice: [],
     });
 
     const openModal = (type) => {
@@ -233,10 +238,10 @@ const SalesLeadWorkspace = () => {
     };
 
     const startLiveAICall = async () => {
-        if (!aiReadiness.ready) {
+        if (!aiReadiness.voiceReady) {
             showToast({
-                title: 'AI is not ready',
-                description: aiReadiness.issues[0] || 'Complete AI setup in integrations first.',
+                title: 'Voice AI is not ready',
+                description: aiReadiness.issuesVoice[0] || 'Set AI_API_KEY and run DB migrations for voice tables.',
                 variant: 'warning',
             });
             return;
@@ -295,10 +300,10 @@ const SalesLeadWorkspace = () => {
     const sendAIAssistedWhatsApp = async (rawText) => {
         const text = String(rawText || '').trim();
         if (!text) return;
-        if (!aiReadiness.ready) {
+        if (!aiReadiness.chatReady) {
             showToast({
-                title: 'AI is not ready',
-                description: aiReadiness.issues[0] || 'Complete AI setup in integrations first.',
+                title: 'WhatsApp AI is not ready',
+                description: aiReadiness.issuesChat[0] || 'Set AI_API_KEY on the backend and restart the server.',
                 variant: 'warning',
             });
             return;
@@ -350,19 +355,33 @@ const SalesLeadWorkspace = () => {
         const loadReadiness = async () => {
             try {
                 const data = await api.get('/integrations/readiness');
-                const checks = data?.checks || {};
-                const blockers = Array.isArray(checks.blockers) ? checks.blockers : [];
-                const aiConfigured = Boolean(checks.aiApiConfigured);
+                const calling = data?.calling || {};
+                const c = calling.checks || {};
+                const chatReady = Boolean(c.aiApiConfigured);
+                const voiceReady = Boolean(calling.ready);
+                const issuesChat = [];
+                const issuesVoice = [];
+                if (!c.aiApiConfigured) {
+                    issuesChat.push('Set AI_API_KEY in backend .env and restart the API server.');
+                    issuesVoice.push('Set AI_API_KEY in backend .env and restart the API server.');
+                }
+                if (!c.voiceTablesPresent) {
+                    issuesVoice.push('Run DB migrations so tables ai_voice_sessions and ai_voice_turns exist.');
+                }
                 setAiReadiness({
                     loading: false,
-                    ready: aiConfigured && blockers.length === 0,
-                    issues: blockers.length > 0 ? blockers : (aiConfigured ? [] : ['AI API key is not configured.']),
+                    chatReady,
+                    voiceReady,
+                    issuesChat,
+                    issuesVoice,
                 });
             } catch (err) {
                 setAiReadiness({
                     loading: false,
-                    ready: false,
-                    issues: [err?.message || 'Could not verify AI readiness.'],
+                    chatReady: false,
+                    voiceReady: false,
+                    issuesChat: [err?.message || 'Could not verify AI readiness.'],
+                    issuesVoice: [err?.message || 'Could not verify AI readiness.'],
                 });
             }
         };
@@ -627,23 +646,35 @@ const SalesLeadWorkspace = () => {
                             </div>
                             <p className="text-sm text-gray-500 mt-0.5">{lead.phone} · {lead.source} · {lead.project}</p>
                             <div className="mt-2">
-                                <span
-                                    className={`inline-flex items-center gap-1.5 text-[11px] font-semibold px-2.5 py-1 rounded-full border ${
-                                        aiReadiness.loading
-                                            ? 'bg-gray-50 text-gray-600 border-gray-200'
-                                            : aiReadiness.ready
-                                                ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
-                                                : 'bg-amber-50 text-amber-700 border-amber-200'
-                                    }`}
-                                    title={!aiReadiness.ready && aiReadiness.issues.length > 0 ? aiReadiness.issues.join(' | ') : 'AI services ready'}
-                                >
-                                    <span
-                                        className={`w-1.5 h-1.5 rounded-full ${
-                                            aiReadiness.loading ? 'bg-gray-400' : aiReadiness.ready ? 'bg-emerald-500' : 'bg-amber-500'
-                                        }`}
-                                    />
-                                    {aiReadiness.loading ? 'Checking AI readiness...' : aiReadiness.ready ? 'AI Ready' : 'AI Setup Required'}
-                                </span>
+                                {(() => {
+                                    const { loading, chatReady, voiceReady, issuesChat, issuesVoice } = aiReadiness;
+                                    const allGreen = !loading && chatReady && voiceReady;
+                                    const partial = !loading && chatReady && !voiceReady;
+                                    const badgeClass = loading
+                                        ? 'bg-gray-50 text-gray-600 border-gray-200'
+                                        : allGreen
+                                            ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                                            : 'bg-amber-50 text-amber-700 border-amber-200';
+                                    const dotClass = loading ? 'bg-gray-400' : allGreen ? 'bg-emerald-500' : 'bg-amber-500';
+                                    const label = loading
+                                        ? 'Checking AI readiness...'
+                                        : allGreen
+                                            ? 'AI Ready'
+                                            : partial
+                                                ? 'Chat ready · run voice DB migration'
+                                                : 'AI Setup Required';
+                                    const tip = loading
+                                        ? ''
+                                        : allGreen
+                                            ? 'WhatsApp AI and voice calls can use the configured API.'
+                                            : [...issuesChat, ...issuesVoice].filter(Boolean).join(' | ');
+                                    return (
+                                        <span className={`inline-flex items-center gap-1.5 text-[11px] font-semibold px-2.5 py-1 rounded-full border ${badgeClass}`} title={tip || label}>
+                                            <span className={`w-1.5 h-1.5 rounded-full ${dotClass}`} />
+                                            {label}
+                                        </span>
+                                    );
+                                })()}
                             </div>
                         </div>
                     </div>
@@ -651,13 +682,13 @@ const SalesLeadWorkspace = () => {
                     {/* Quick Actions */}
                     <div className="flex items-center gap-2 flex-wrap">
                         <button onClick={() => openModal('call')}
-                            disabled={!aiReadiness.ready}
-                            className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-semibold flex items-center gap-2 text-sm shadow-sm transition-colors">
+                            disabled={!aiReadiness.voiceReady}
+                            className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-semibold flex items-center gap-2 text-sm shadow-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-blue-600">
                             <Phone size={14} /> Call
                         </button>
                         <button onClick={() => openModal('whatsapp')}
-                            disabled={!aiReadiness.ready}
-                            className="px-4 py-2 bg-[#25D366] hover:bg-[#128C7E] text-white rounded-lg font-semibold flex items-center gap-2 text-sm shadow-sm transition-colors">
+                            disabled={!aiReadiness.chatReady}
+                            className="px-4 py-2 bg-[#25D366] hover:bg-[#128C7E] text-white rounded-lg font-semibold flex items-center gap-2 text-sm shadow-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-[#25D366]">
                             <MessageSquare size={14} /> WhatsApp
                         </button>
                         <button onClick={() => openModal('schedule')}
