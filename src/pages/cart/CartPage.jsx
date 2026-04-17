@@ -1,0 +1,754 @@
+import React, { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { ShoppingCart, Trash2, ArrowRight, ShieldCheck, CreditCard, Package, Megaphone, Phone, UserCheck, Headphones, Layers, Loader, X, Check } from 'lucide-react';
+import { useCart } from '../../commerce/CartContext';
+import { useAuth } from '../../context/AuthContext';
+import { usePricing } from '../../context/PricingContext';
+import { useSubscription } from '../../commerce/SubscriptionContext';
+import { MODULES } from '../../commerce/commerce.config';
+import { useToast } from '../../components/ui/Toast';
+import { usePreferences } from '../../context/PreferencesContext';
+import Button from '../../components/ui/Button';
+import AuthModal from '../../components/auth/AuthModal';
+import { loadRazorpayScript } from '../../utils/razorpay';
+import api from '../../lib/api';
+
+const CartPage = () => {
+    const { cart, removeItem, getCartTotal, addSubscription, openMiniCart, clearCart } = useCart();
+    const { isAuthenticated, user } = useAuth();
+    const { isModuleActive, activateSubscription, clearCartAfterPurchase, addCredits } = useSubscription();
+    const { showToast } = useToast();
+    const { formatCurrency } = usePreferences();
+    const { getMonthlyPrice, getYearlyPrice } = usePricing();
+    const navigate = useNavigate();
+
+    const handleContinueShopping = () => {
+        navigate('/#pricing');
+    };
+
+    const [billingDetails, setBillingDetails] = useState({
+        fullName: '',
+        email: user?.email || '',
+        companyName: '',
+        taxId: '',
+        billingAddress: ''
+    });
+
+
+    // Billing cycle state
+    const [billingCycle, setBillingCycle] = useState('monthly'); // 'monthly' | 'yearly'
+
+    // Promo code state
+    const [promoCode, setPromoCode] = useState('');
+    const [appliedPromo, setAppliedPromo] = useState(null);
+    const [promoError, setPromoError] = useState('');
+    const [isApplyingPromo, setIsApplyingPromo] = useState(false);
+
+    // Payment processing state
+    const [isProcessing, setIsProcessing] = useState(false);
+
+    // Auth Modal state
+    const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
+
+    // Valid promo codes (in production, this would be fetched from backend)
+    const validPromoCodes = {
+        'SAVE10': { discount: 0.10, type: 'percentage', description: '10% off' },
+        'SAVE20': { discount: 0.20, type: 'percentage', description: '20% off' },
+        'FLAT1000': { discount: 1000, type: 'fixed', description: `${formatCurrency(1000)} off` },
+        'WELCOME': { discount: 0.15, type: 'percentage', description: '15% off' }
+    };
+
+    const calculateItemPrice = (item) => {
+        if (item.type === 'credits') return item.price; // Credits don't have billing cycles
+
+        // Get dynamic price if available, otherwise fallback to item.price
+        let productKey = item.moduleId;
+        if (productKey === 'bundle' || productKey === 'salespal360') productKey = 'salespal-360';
+        if (productKey === 'postSale') productKey = 'post-sales';
+        
+        let targetPrice = getMonthlyPrice(productKey) || 0;
+        
+        if (billingCycle === 'yearly') {
+             // Try to get explicit yearly price from DB if available, else derive from monthly
+             const explicitYearly = getYearlyPrice(productKey);
+             if (explicitYearly && explicitYearly > 0) return explicitYearly;
+             
+             // Base derived yearly is monthly * 12 * 0.85 (15% discount fallback)
+             return Math.round(targetPrice * 12 * 0.85);
+        }
+        return targetPrice;
+    };
+
+    // Calculate subtotal based on billing cycle
+    const calculateSubtotal = () => {
+        return cart.reduce((total, item) => {
+            const itemPrice = calculateItemPrice(item);
+            return total + (itemPrice * (item.quantity || 1));
+        }, 0);
+    };
+
+    const subtotalWithCycle = calculateSubtotal();
+
+    // Calculate yearly discount amount (only for display)
+    const yearlyDiscountAmount = billingCycle === 'yearly'
+        ? cart.reduce((total, item) => {
+            if (item.type === 'credits') return total;
+            
+            let productKey = item.moduleId;
+            if (productKey === 'bundle' || productKey === 'salespal360') productKey = 'salespal-360';
+            if (productKey === 'postSale') productKey = 'post-sales';
+            
+            const monthlyPrice = getMonthlyPrice(productKey) || 0;
+            const fullYearlyPrice = monthlyPrice * 12;
+            const actualYearlyPrice = calculateItemPrice(item);
+            return total + ((fullYearlyPrice - actualYearlyPrice) * (item.quantity || 1));
+        }, 0)
+        : 0;
+
+    // Calculate promo discount
+    const calculatePromoDiscount = () => {
+        if (!appliedPromo) return 0;
+        const promo = validPromoCodes[appliedPromo];
+        if (promo.type === 'percentage') {
+            return Math.round(subtotalWithCycle * promo.discount);
+        }
+        return promo.discount;
+    };
+
+    const promoDiscount = calculatePromoDiscount();
+    const finalTotal = Math.max(0, subtotalWithCycle - promoDiscount);
+
+    const handleApplyPromo = () => {
+        setIsApplyingPromo(true);
+        setPromoError('');
+
+        // Simulate API call
+        setTimeout(() => {
+            const upperPromo = promoCode.trim().toUpperCase();
+            if (validPromoCodes[upperPromo]) {
+                setAppliedPromo(upperPromo);
+                setPromoError('');
+                showToast({
+                    title: 'Promo Code Applied',
+                    description: `${validPromoCodes[upperPromo].description} discount applied successfully!`,
+                    duration: 3000
+                });
+            } else {
+                setPromoError('Invalid promo code. Please try again.');
+            }
+            setIsApplyingPromo(false);
+        }, 500);
+    };
+
+    const handleRemovePromo = () => {
+        setAppliedPromo(null);
+        setPromoCode('');
+        setPromoError('');
+    };
+
+    const handleBillingChange = (field, value) => {
+        setBillingDetails((prev) => ({
+            ...prev,
+            [field]: value,
+        }));
+    };
+
+    const suggestedModules = Object.values(MODULES).filter((module) => {
+        const inCart = cart.some(
+            (item) => item.type === 'subscription' && item.moduleId === module.id
+        );
+        return !isModuleActive(module.id) && !inCart;
+    });
+
+    const handleQuickAdd = (module) => {
+        addSubscription(module.id);
+        openMiniCart();
+        showToast({
+            title: 'Added to Cart',
+            description: `SalesPal ${module.name} Plan has been added to your cart.`,
+            duration: 3000,
+        });
+    };
+
+    if (cart.length === 0) {
+        return (
+            <div className="min-h-[70vh] bg-gray-50 flex flex-col items-center justify-center p-6 text-center">
+                <div className="w-16 h-16 bg-gray-50 rounded-full flex items-center justify-center mb-6">
+                    <ShoppingCart className="w-8 h-8 text-gray-400" />
+                </div>
+                <h1 className="text-xl font-semibold text-gray-900 mb-2">Your cart is empty.</h1>
+                <p className="text-gray-500 max-w-sm mb-8 text-sm">
+                    You haven&apos;t added any plans or credits yet. Explore our modules to get started.
+                </p>
+                <Button
+                    onClick={handleContinueShopping}
+                    className="gap-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg px-6 py-2.5"
+                >
+                    Explore Plans
+                </Button>
+            </div>
+        );
+    }
+
+    return (
+        <div className="min-h-[70vh] bg-gray-50">
+            <div className="max-w-6xl mx-auto px-6 py-10">
+                <div className="flex items-center justify-between mb-8">
+                    <div>
+                        <h1 className="text-3xl font-semibold text-gray-900">
+                            Checkout
+                        </h1>
+                        <p className="mt-1 text-sm text-gray-500">
+                            Review your order and complete your subscription.
+                        </p>
+                    </div>
+                    <button
+                        type="button"
+                        onClick={handleContinueShopping}
+                        className="text-sm font-medium text-blue-600 hover:text-blue-800 flex items-center gap-1"
+                    >
+                        <span>Continue Shopping</span>
+                        <ArrowRight className="w-4 h-4" />
+                    </button>
+                </div>
+
+                <div className="grid lg:grid-cols-3 gap-10">
+                    {/* Left: Order, Billing, and Payment */}
+                    <div className="lg:col-span-2 space-y-6">
+                        {/* Your Order */}
+                        <div className="bg-white border border-gray-200 rounded-lg p-4 shadow-sm">
+                            <h2 className="text-lg font-semibold text-gray-900 mb-3">
+                                Your Order
+                            </h2>
+                            <div className="space-y-3">
+                                {cart.map((item) => {
+                                    let iconBg = 'bg-gray-100 text-gray-500';
+                                    let Icon = Package;
+
+                                    if (item.type === 'subscription' || item.type === 'bundle') {
+                                        switch (item.moduleId) {
+                                            case 'marketing':
+                                                iconBg = 'bg-blue-100 text-blue-600';
+                                                Icon = Megaphone;
+                                                break;
+                                            case 'sales':
+                                                iconBg = 'bg-green-100 text-green-600';
+                                                Icon = Phone;
+                                                break;
+                                            case 'postSale':
+                                                iconBg = 'bg-orange-100 text-orange-600';
+                                                Icon = UserCheck;
+                                                break;
+                                            case 'support':
+                                                iconBg = 'bg-red-100 text-red-600';
+                                                Icon = Headphones;
+                                                break;
+                                            case 'bundle':
+                                                iconBg = 'bg-purple-100 text-purple-600';
+                                                Icon = Layers;
+                                                break;
+                                            default:
+                                                iconBg = 'bg-blue-50 text-blue-600';
+                                                Icon = Package;
+                                        }
+                                    } else if (item.type === 'credits') {
+                                        iconBg = 'bg-green-100 text-green-600';
+                                        Icon = CreditCard;
+                                    }
+
+                                    return (
+                                        <div
+                                            key={item.id}
+                                            className="border border-gray-200 rounded-lg p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4"
+                                        >
+                                            <div className="flex items-start gap-4">
+                                                <div className={`w-10 h-10 rounded-lg flex items-center justify-center shrink-0 ${iconBg}`}>
+                                                    <Icon className="w-5 h-5" />
+                                                </div>
+                                                <div>
+                                                    <div className="flex items-center gap-2 mb-1">
+                                                        <span className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full ${item.type === 'subscription' || item.type === 'bundle'
+                                                            ? 'bg-blue-100 text-blue-700'
+                                                            : 'bg-green-100 text-green-700'
+                                                            }`}>
+                                                            {item.type === 'subscription' || item.type === 'bundle' ? 'Plan' : 'Credit'}
+                                                        </span>
+                                                    </div>
+                                                    <h3 className="text-sm font-semibold text-gray-900">{item.name}</h3>
+                                                    <div className="flex items-center gap-2 mt-0.5">
+                                                        <p className="text-xs text-gray-500">
+                                                            {item.type === 'subscription' || item.type === 'bundle'
+                                                                ? `Billed ${billingCycle}`
+                                                                : `${item.amount} ${item.resource} items`}
+                                                        </p>
+                                                        {billingCycle === 'yearly' && (item.type === 'subscription' || item.type === 'bundle') && (
+                                                            <span className="text-[10px] font-semibold px-1.5 py-0.5 bg-green-50 text-green-700 rounded">
+                                                                15% yearly discount
+                                                            </span>
+                                                        )}
+                                                    </div>
+                                                </div>
+                                            </div>
+
+                                            <div className="flex items-center justify-between sm:justify-end gap-4 w-full sm:w-auto">
+                                                <div className="text-right">
+                                                    <div className="flex items-center gap-2 justify-end">
+                                                        <span className="block text-sm font-semibold text-gray-900">
+                                                            {formatCurrency(calculateItemPrice(item) * (item.quantity || 1))}
+                                                        </span>
+                                                        {item.type === 'credits' && (item.quantity || 1) > 1 && (
+                                                            <span className="text-xs font-medium text-gray-500 bg-gray-100 px-2 py-0.5 rounded">
+                                                                x{item.quantity}
+                                                            </span>
+                                                        )}
+                                                    </div>
+                                                </div>
+                                                <button
+                                                    onClick={() => removeItem(item.id)}
+                                                    className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                                                    title="Remove item"
+                                                >
+                                                    <Trash2 className="w-4 h-4" />
+                                                </button>
+                                            </div>
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                            <div className="mt-6 border-t border-gray-100" />
+                        </div>
+
+                        {/* Billing Details */}
+                        <div className="bg-white border border-gray-200 rounded-lg p-6 shadow-sm">
+                            <h2 className="text-lg font-semibold text-gray-900 mb-3">
+                                Billing Details
+                            </h2>
+                            <div className="space-y-4">
+                                <div>
+                                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                                        Full Name
+                                    </label>
+                                    <input
+                                        type="text"
+                                        className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
+                                        placeholder="Enter your full name"
+                                        value={billingDetails.fullName}
+                                        onChange={(e) => handleBillingChange('fullName', e.target.value)}
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                                        Email
+                                    </label>
+                                    <input
+                                        type="email"
+                                        className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
+                                        placeholder="you@company.com"
+                                        value={billingDetails.email}
+                                        onChange={(e) => handleBillingChange('email', e.target.value)}
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                                        Company Name <span className="text-gray-400 text-xs">(optional)</span>
+                                    </label>
+                                    <input
+                                        type="text"
+                                        className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
+                                        placeholder="Your company"
+                                        value={billingDetails.companyName}
+                                        onChange={(e) => handleBillingChange('companyName', e.target.value)}
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                                        GST / Tax ID <span className="text-gray-400 text-xs">(optional)</span>
+                                    </label>
+                                    <input
+                                        type="text"
+                                        className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
+                                        placeholder="Enter your GST or tax ID"
+                                        value={billingDetails.taxId}
+                                        onChange={(e) => handleBillingChange('taxId', e.target.value)}
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                                        Billing Address <span className="text-gray-400 text-xs">(optional)</span>
+                                    </label>
+                                    <textarea
+                                        rows={3}
+                                        className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
+                                        placeholder="Street, city, state, postal code"
+                                        value={billingDetails.billingAddress}
+                                        onChange={(e) => handleBillingChange('billingAddress', e.target.value)}
+                                    />
+                                </div>
+                            </div>
+                        </div>
+
+                    </div>
+
+                    {/* Right: Order Summary */}
+                    <div>
+                        <div className="bg-white border border-gray-200 rounded-xl p-6 shadow-sm sticky top-32 space-y-5">
+                            <div>
+                                <h2 className="text-lg font-semibold text-gray-900 mb-1">Order Summary</h2>
+                                <p className="text-xs text-gray-500">
+                                    Billed {billingCycle} • Renews automatically
+                                </p>
+                            </div>
+
+                            {/* Billing Cycle Toggle */}
+                            <div className="border-t border-gray-100 pt-4">
+                                <label className="block text-sm font-medium text-gray-700 mb-3">
+                                    Billing Cycle
+                                </label>
+                                <div className="relative bg-gray-100 rounded-lg p-1 flex gap-1">
+                                    <button
+                                        onClick={() => setBillingCycle('monthly')}
+                                        className={`flex-1 px-4 py-2.5 text-sm font-medium rounded-md transition-all duration-200 ${billingCycle === 'monthly'
+                                            ? 'bg-white text-gray-900 shadow-sm'
+                                            : 'text-gray-600 hover:text-gray-900'
+                                            }`}
+                                    >
+                                        Monthly
+                                    </button>
+                                    <button
+                                        onClick={() => setBillingCycle('yearly')}
+                                        className={`flex-1 px-4 py-2.5 text-sm font-medium rounded-md transition-all duration-200 flex items-center justify-center gap-2 ${billingCycle === 'yearly'
+                                            ? 'bg-white text-gray-900 shadow-sm'
+                                            : 'text-gray-600 hover:text-gray-900'
+                                            }`}
+                                    >
+                                        <span>Yearly</span>
+                                        <span className="text-[10px] font-semibold px-1.5 py-0.5 bg-green-100 text-green-700 rounded whitespace-nowrap">
+                                            Save 15%
+                                        </span>
+                                    </button>
+                                </div>
+                            </div>
+
+                            {/* Promo Code Section */}
+                            <div className="border-t border-gray-100 pt-4">
+                                <label className="block text-sm font-medium text-gray-700 mb-2">
+                                    Promo Code
+                                </label>
+                                {appliedPromo ? (
+                                    <div className="flex items-center justify-between bg-green-50 border border-green-200 rounded-lg px-3 py-2.5">
+                                        <div className="flex items-center gap-2">
+                                            <Check className="w-4 h-4 text-green-600" />
+                                            <span className="text-sm font-semibold text-green-700">{appliedPromo}</span>
+                                            <span className="text-xs text-green-600">({validPromoCodes[appliedPromo].description})</span>
+                                        </div>
+                                        <button
+                                            onClick={handleRemovePromo}
+                                            className="text-xs text-green-600 hover:text-green-800 font-medium flex items-center gap-1"
+                                        >
+                                            <X className="w-3 h-3" />
+                                            Remove
+                                        </button>
+                                    </div>
+                                ) : (
+                                    <div>
+                                        <div className="flex gap-2">
+                                            <input
+                                                type="text"
+                                                placeholder="Enter promo code"
+                                                value={promoCode}
+                                                onChange={(e) => setPromoCode(e.target.value)}
+                                                onKeyPress={(e) => e.key === 'Enter' && handleApplyPromo()}
+                                                className="flex-1 px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                                            />
+                                            <button
+                                                onClick={handleApplyPromo}
+                                                disabled={!promoCode.trim() || isApplyingPromo}
+                                                className="px-4 py-2 bg-gray-900 text-white text-sm font-medium rounded-lg hover:bg-gray-800 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors flex items-center gap-2"
+                                            >
+                                                {isApplyingPromo ? (
+                                                    <>
+                                                        <Loader className="w-4 h-4 animate-spin" />
+                                                        <span>Applying...</span>
+                                                    </>
+                                                ) : (
+                                                    'Apply'
+                                                )}
+                                            </button>
+                                        </div>
+                                        {promoError && (
+                                            <p className="mt-2 text-xs text-red-600 flex items-center gap-1">
+                                                <X className="w-3 h-3" />
+                                                {promoError}
+                                            </p>
+                                        )}
+                                    </div>
+                                )}
+                            </div>
+
+                            {/* Pricing Breakdown */}
+                            <div className="border-t border-gray-100 pt-4 space-y-3">
+                                <div className="flex justify-between text-sm text-gray-600">
+                                    <span>Subtotal</span>
+                                    <span className="font-medium">{formatCurrency(subtotalWithCycle)}</span>
+                                </div>
+
+                                {billingCycle === 'yearly' && yearlyDiscountAmount > 0 && (
+                                    <div className="flex justify-between text-sm text-green-600">
+                                        <span>Yearly discount (15%)</span>
+                                        <span className="font-medium">-{formatCurrency(yearlyDiscountAmount)}</span>
+                                    </div>
+                                )}
+
+                                {appliedPromo && promoDiscount > 0 && (
+                                    <div className="flex justify-between text-sm text-green-600">
+                                        <span>Promo ({validPromoCodes[appliedPromo].description})</span>
+                                        <span className="font-medium">-{formatCurrency(promoDiscount)}</span>
+                                    </div>
+                                )}
+
+                                <div className="flex justify-between text-sm text-gray-400">
+                                    <span>Taxes</span>
+                                    <span className="text-xs">Calculated at checkout</span>
+                                </div>
+                            </div>
+
+                            {/* Total */}
+                            <div className="border-t border-gray-200 pt-4">
+                                <div className="flex justify-between items-baseline">
+                                    <span className="text-base font-semibold text-gray-900">Total due today</span>
+                                    <span className="text-2xl font-bold text-gray-900">{formatCurrency(finalTotal)}</span>
+                                </div>
+                            </div>
+
+                            {/* Complete Purchase Button */}
+                            <Button
+                                className="w-full justify-center py-3.5 text-sm font-semibold shadow-none"
+                                onClick={async () => {
+                                    if (!cart.length || isProcessing) return;
+
+                                    if (!isAuthenticated) {
+                                        setIsAuthModalOpen(true);
+                                        return;
+                                    }
+
+                                    setIsProcessing(true);
+
+                                    try {
+                                        // 1. Load Razorpay script
+                                        await loadRazorpayScript();
+
+                                        // 2. Format items for cart
+                                        const items = cart
+                                            .filter(item => item.type === 'subscription' || item.type === 'bundle')
+                                            .map(item => {
+                                                let productType = item.moduleId || item.iconKey || 'marketing';
+                                                if (productType === 'bundle' || productType === 'salespal360') productType = 'salespal-360';
+                                                if (productType === 'postSale') productType = 'post-sales';
+                                                return { productType, quantity: item.quantity || 1 };
+                                            });
+
+                                        if (items.length === 0) {
+                                            throw new Error('No valid subscription items in cart for checkout');
+                                        }
+
+                                        // 3. Create order on backend (server controls pricing)
+                                        const data = await api.post('/api/payment/create-order', { items, billingCycle });
+
+                                        if (!data || !data.success || !data.order) {
+                                            throw new Error('Failed to create payment order');
+                                        }
+
+                                        const { order, key } = data;
+
+                                        // 4. Open Razorpay checkout popup
+                                        const options = {
+                                            key: key || import.meta.env.VITE_RAZORPAY_KEY_ID,
+                                            amount: order.amount,
+                                            currency: order.currency || 'INR',
+                                            name: 'SalesPal',
+                                            description: `SalesPal Plan Checkout`,
+                                            order_id: order.id,
+                                            handler: async function (response) {
+                                                try {
+                                                    // Verify payment signature on backend first
+                                                    const verification = await api.post('/api/payment/verify', {
+                                                        items,
+                                                        billingCycle,
+                                                        razorpay_payment_id: response.razorpay_payment_id,
+                                                        razorpay_order_id: response.razorpay_order_id,
+                                                        razorpay_signature: response.razorpay_signature,
+                                                    });
+
+                                                    if (!verification.success) {
+                                                        throw new Error(verification.message || 'Payment verification failed');
+                                                    }
+
+                                                    // Verified -> activate subscriptions
+                                                    cart.forEach((item) => {
+                                                        if (item.type === 'subscription' || item.type === 'bundle') {
+                                                            activateSubscription(item);
+                                                        } else if (item.type === 'credits') {
+                                                            const creditsPerPack = item.amount || 0;
+                                                            const packsPurchased = item.quantity || 1;
+                                                            const totalCredits = creditsPerPack * packsPurchased;
+                                                            if (totalCredits > 0 && item.resource) {
+                                                                addCredits('marketing', item.resource, totalCredits);
+                                                            }
+                                                        }
+                                                    });
+
+                                                    showToast({
+                                                        title: 'Payment Successful',
+                                                        description: 'Your subscription has been activated successfully!',
+                                                        duration: 3000
+                                                    });
+
+                                                    const purchasedItems = [...cart];
+                                                    clearCart();
+                                                    clearCartAfterPurchase();
+                                                    navigate('/purchase-success', {
+                                                        state: {
+                                                            purchasedItems,
+                                                            paymentId: verification.paymentId || response.razorpay_payment_id,
+                                                            invoiceNumber: verification.invoiceNumber,
+                                                            orderId: response.razorpay_order_id,
+                                                        }
+                                                    });
+                                                } catch (verifyError) {
+                                                    console.error('Payment verification failed:', verifyError);
+                                                    showToast({
+                                                        title: 'Verification Failed',
+                                                        description: 'Payment could not be verified. Please contact support.',
+                                                        duration: 5000
+                                                    });
+                                                    setIsProcessing(false);
+                                                }
+                                            },
+                                            prefill: {
+                                                name: billingDetails.fullName || user?.full_name || user?.name || '',
+                                                email: billingDetails.email || user?.email || '',
+                                            },
+                                            theme: {
+                                                color: '#2563eb',
+                                            },
+                                            modal: {
+                                                ondismiss: function () {
+                                                    setIsProcessing(false);
+                                                },
+                                            },
+                                        };
+
+                                        const rzp = new window.Razorpay(options);
+
+                                        rzp.on('payment.failed', function (response) {
+                                            console.error('Payment failed:', response.error);
+                                            showToast({
+                                                title: 'Payment Failed',
+                                                description: response.error?.description || 'There was an error processing your payment. Please try again.',
+                                                duration: 5000
+                                            });
+                                            setIsProcessing(false);
+                                        });
+
+                                        rzp.open();
+                                    } catch (error) {
+                                        console.error('Payment failed:', error);
+                                        showToast({
+                                            title: 'Payment Failed',
+                                            description: error?.message || 'There was an error processing your payment. Please try again.',
+                                            duration: 5000
+                                        });
+                                        setIsProcessing(false);
+                                    }
+                                }}
+                                disabled={cart.length === 0 || isProcessing}
+                            >
+                                {isProcessing ? (
+                                    <span className="flex items-center gap-2">
+                                        <Loader className="w-4 h-4 animate-spin" />
+                                        Processing...
+                                    </span>
+                                ) : (
+                                    'Complete Purchase'
+                                )}
+                            </Button>
+
+                            {/* Recurring Billing Disclaimer */}
+                            <p className="text-xs text-gray-500 text-center leading-relaxed px-2">
+                                By clicking Complete Purchase, you agree to recurring monthly billing. Cancel anytime from Billing Settings.
+                            </p>
+
+                            {/* Trust Indicators */}
+                            <div className="border-t border-gray-100 pt-4 flex flex-wrap items-center justify-center gap-x-4 gap-y-2 text-[11px] text-gray-500">
+                                <span className="flex items-center gap-1.5">
+                                    <ShieldCheck className="w-3.5 h-3.5 text-green-600" />
+                                    <span className="font-medium">Secure Checkout</span>
+                                </span>
+                                <span className="h-3 w-px bg-gray-200 hidden sm:inline-block" />
+                                <span className="flex items-center gap-1.5">
+                                    <CreditCard className="w-3.5 h-3.5 text-blue-600" />
+                                    <span>Powered by Razorpay</span>
+                                </span>
+                                <span className="h-3 w-px bg-gray-200 hidden sm:inline-block" />
+                                <span className="font-medium">GST Invoice Available</span>
+                                <span className="h-3 w-px bg-gray-200 hidden sm:inline-block" />
+                                <span className="font-medium">Cancel Anytime</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                {suggestedModules.length > 0 && (
+                    <div className="mt-12 border-t border-gray-100 pt-10">
+                        <h2 className="text-xl font-semibold text-gray-900 mb-4">
+                            Recommended for You
+                        </h2>
+                        <p className="text-sm text-gray-500 mb-6 max-w-2xl">
+                            Add complementary SalesPal modules to unlock a more complete revenue stack.
+                        </p>
+
+                        <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-6">
+                            {suggestedModules.map((module) => (
+                                <div
+                                    key={module.id}
+                                    className="bg-white border border-gray-200 rounded-xl p-5 flex flex-col justify-between shadow-sm hover:shadow-md transition-shadow"
+                                >
+                                    <div className="mb-4">
+                                        <p className="text-xs font-semibold uppercase tracking-widest text-gray-500 mb-1">
+                                            Suggested Module
+                                        </p>
+                                        <h3 className="text-lg font-semibold text-gray-900 mb-1">
+                                            SalesPal {module.name}
+                                        </h3>
+                                        <p className="text-sm text-gray-500">
+                                            {formatCurrency(module.price)} / month
+                                        </p>
+                                    </div>
+
+                                    <Button
+                                        size="sm"
+                                        className="mt-2 w-full justify-center"
+                                        onClick={() => handleQuickAdd(module)}
+                                    >
+                                        Add to Cart
+                                    </Button>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                )}
+            </div>
+
+            <AuthModal
+                isOpen={isAuthModalOpen}
+                onClose={() => setIsAuthModalOpen(false)}
+                onSuccess={() => {
+                    setIsAuthModalOpen(false);
+                    // The user is now authenticated! They can click "Complete Purchase" again.
+                }}
+            />
+        </div >
+    );
+};
+
+export default CartPage;

@@ -1,0 +1,43 @@
+﻿const env = require('../config/env');
+const logger = require('../config/logger');
+
+/**
+ * Server-side pricing map (monthly amounts in Γé╣).
+ * These are the ONLY source of truth ΓÇö frontend values are never trusted.
+ */
+const PRICE_MAP = {
+  marketing: 1,
+  sales: 9999,
+  'post-sales': 9999,
+  support: 9999,
+  'salespal-360': 29999,
+};
+
+/**
+ * Return the amount (in Γé╣) that should actually be charged.
+ * Pricing is fully server-controlled ΓÇö no frontend input is used.
+ *
+ * @param {string} productType  ΓÇô key from PRICE_MAP
+ * @returns {number} amount in Γé╣
+ * @throws {Error} if productType is invalid
+ */
+function getFinalAmount(productType) {
+  const amount = PRICE_MAP[productType];
+
+  if (amount === undefined) {
+    const err = new Error(
+      `Unknown productType "${productType}". Valid types: ${Object.keys(PRICE_MAP).join(', ')}`
+    );
+    err.statusCode = 400;
+    err.code = 'INVALID_PRODUCT';
+    throw err;
+  }
+
+  logger.info(
+    `Pricing resolved: product=${productType} amount=Γé╣${amount} env=${env.NODE_ENV}`
+  );
+
+  return amount;
+}
+
+module.exports = { getFinalAmount, PRICE_MAP };

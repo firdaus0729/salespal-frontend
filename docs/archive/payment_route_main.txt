@@ -1,0 +1,127 @@
+﻿const express = require('express');
+const crypto = require('crypto');
+const router = express.Router();
+const { getInstance: getRazorpay } = require('../utils/razorpay');
+const { getFinalAmount } = require('../utils/pricing');
+const logger = require('../config/logger');
+
+/**
+ * POST /api/payment/create-order
+ *
+ * Body: { productType: "marketing" | "sales" | ... }
+ *
+ * - Price is resolved entirely server-side (never trust frontend).
+ * - Returns the Razorpay order object so the frontend can open the checkout.
+ */
+router.post('/create-order', async (req, res, next) => {
+  try {
+    const { productType } = req.body;
+
+    // ΓöÇΓöÇ Validate ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+    if (!productType || typeof productType !== 'string') {
+      return res.status(400).json({
+        success: false,
+        error: { code: 'VALIDATION_ERROR', message: 'productType is required' },
+      });
+    }
+
+    // getFinalAmount throws with statusCode 400 for invalid types
+    const amount = getFinalAmount(productType.toLowerCase());
+    const amountInPaise = amount * 100; // Razorpay expects paise
+
+    // ΓöÇΓöÇ Create Razorpay order ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+    const order = await getRazorpay().orders.create({
+      amount: amountInPaise,
+      currency: 'INR',
+      receipt: `receipt_${Date.now()}`,
+      notes: {
+        productType,
+        userId: req.user?.id || 'unknown',
+      },
+    });
+
+    logger.info(
+      `Razorpay order created: orderId=${order.id} product=${productType} ` +
+      `amount=Γé╣${amount} (${amountInPaise} paise) userId=${req.user?.id}`
+    );
+
+    return res.json({
+      success: true,
+      order,
+      key: process.env.RAZORPAY_KEY_ID, // frontend needs this to open checkout
+    });
+  } catch (err) {
+    logger.error(`Payment order creation failed: ${err.message}`);
+    next(err);
+  }
+});
+
+/**
+ * POST /api/payment/verify
+ *
+ * Body: { razorpay_payment_id, razorpay_order_id, razorpay_signature }
+ *
+ * Validates the payment signature using HMAC-SHA256 to ensure
+ * the payment was not tampered with or faked.
+ */
+router.post('/verify', async (req, res, next) => {
+  try {
+    const { razorpay_payment_id, razorpay_order_id, razorpay_signature } = req.body;
+
+    // ΓöÇΓöÇ Validate input ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+    if (!razorpay_payment_id || !razorpay_order_id || !razorpay_signature) {
+      return res.status(400).json({
+        success: false,
+        message: 'Missing required fields: razorpay_payment_id, razorpay_order_id, razorpay_signature',
+      });
+    }
+
+    const secret = process.env.RAZORPAY_KEY_SECRET;
+    if (!secret) {
+      logger.error('RAZORPAY_KEY_SECRET not configured ΓÇö cannot verify payment');
+      return res.status(503).json({
+        success: false,
+        message: 'Payment verification is not configured',
+      });
+    }
+
+    // ΓöÇΓöÇ Generate expected signature ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+    const generatedSignature = crypto
+      .createHmac('sha256', secret)
+      .update(`${razorpay_order_id}|${razorpay_payment_id}`)
+      .digest('hex');
+
+    // ΓöÇΓöÇ Compare ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+    const isValid = crypto.timingSafeEqual(
+      Buffer.from(generatedSignature, 'hex'),
+      Buffer.from(razorpay_signature, 'hex')
+    );
+
+    if (isValid) {
+      logger.info(
+        `Payment verified: orderId=${razorpay_order_id} paymentId=${razorpay_payment_id} userId=${req.user?.id}`
+      );
+
+      return res.json({
+        success: true,
+        message: 'Payment verified',
+        paymentId: razorpay_payment_id,
+        orderId: razorpay_order_id,
+      });
+    } else {
+      logger.warn(
+        `Payment verification FAILED (signature mismatch): orderId=${razorpay_order_id} paymentId=${razorpay_payment_id} userId=${req.user?.id}`
+      );
+
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid payment signature ΓÇö verification failed',
+      });
+    }
+  } catch (err) {
+    logger.error(`Payment verification error: ${err.message}`);
+    next(err);
+  }
+});
+
+module.exports = router;

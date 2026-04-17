@@ -1,0 +1,38 @@
+/**
+ * Dynamically loads the Razorpay checkout script exactly once.
+ * Returns a promise that resolves when the script is ready.
+ */
+let loadPromise = null;
+
+export function loadRazorpayScript() {
+  if (loadPromise) return loadPromise;
+
+  loadPromise = new Promise((resolve, reject) => {
+    // Already loaded (e.g. via <script> in index.html)
+    if (window.Razorpay) {
+      resolve(window.Razorpay);
+      return;
+    }
+
+    const script = document.createElement('script');
+    script.src = 'https://checkout.razorpay.com/v1/checkout.js';
+    script.async = true;
+
+    script.onload = () => {
+      if (window.Razorpay) {
+        resolve(window.Razorpay);
+      } else {
+        reject(new Error('Razorpay SDK loaded but Razorpay object not found'));
+      }
+    };
+
+    script.onerror = () => {
+      loadPromise = null; // allow retry
+      reject(new Error('Failed to load Razorpay checkout script'));
+    };
+
+    document.body.appendChild(script);
+  });
+
+  return loadPromise;
+}

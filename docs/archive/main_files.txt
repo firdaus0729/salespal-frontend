@@ -1,0 +1,13 @@
+﻿commit 89be5a9b279ec78956b17c345864fcd8d63ecd00
+Merge: dc14df1 2644f76
+Author: SosukeAizen11 <mandaliasumit@gmail.com>
+Date:   Tue Apr 7 14:25:23 2026 +0530
+
+    Merge pull request #49 from SosukeAizen11/prathamesh
+    
+    admin notifications
+
+ backend/src/controllers/marketing.controller.js | 12 ++++++++++++
+ backend/src/controllers/projects.controller.js  | 12 ++++++++++++
+ backend/src/controllers/sales.controller.js     | 11 +++++++++++
+ 3 files changed, 35 insertions(+)
