@@ -64,13 +64,14 @@ const buildScriptPrompt = ({ goal, audience, websiteUrl }) => {
   ];
   if (websiteUrl) parts.push(`Website context (use to tailor script): ${websiteUrl}`);
   parts.push(
-    `Output format:`,
-    `1) Opener (2 lines)`,
-    `2) Qualifying questions (5 bullets)`,
-    `3) Pitch (5-7 lines)`,
-    `4) Objection handling (3 common objections + replies)`,
-    `5) Closing CTA (2 lines)`,
-    `Keep it crisp, conversational, and easy to read.`
+    `Return the script as clean Markdown only (no HTML, no JSON).`,
+    `Formatting rules:`,
+    `- Use ## for the five main sections exactly in this order: Opener, Qualifying questions, Pitch, Objection handling, Closing CTA.`,
+    `- Under each ## section use normal paragraphs and/or Markdown bullet lists (- item).`,
+    `- Do not wrap entire sections in quotation marks. Do not use ### subheadings unless you need one short subheading inside Objection handling.`,
+    `- Do not use bracket placeholders like [Name], [Your Name], or [Company]. Write natural generic wording (e.g. greet the person by name only if the rep will see it in CRM—otherwise say "Hi there" or "Hello").`,
+    `- For Objection handling use a numbered Markdown list; each item should be **Objection:** … then a new line with **Reply:** …`,
+    `- Keep tone conversational and easy to read aloud.`,
   );
   return parts.join('\n');
 };
@@ -78,14 +79,24 @@ const buildScriptPrompt = ({ goal, audience, websiteUrl }) => {
 const buildWhatsAppPrompt = ({ goal, offerDetails, websiteUrl }) => {
   const parts = [
     `You are a senior sales copywriter.`,
-    `Write a WhatsApp message template for outreach.`,
+    `Write WhatsApp outreach copy for a sales campaign.`,
     `Campaign goal: ${goal || 'Not provided'}`,
     `Offer details: ${offerDetails || 'Not provided'}`,
   ];
   if (websiteUrl) parts.push(`Website context (use to tailor message): ${websiteUrl}`);
   parts.push(
-    `Output: 1 short message (max 450 characters) + 2 alternative variations.`,
-    `Tone: friendly, professional, no hype, includes a clear CTA.`,
+    `Return Markdown only (no HTML, no JSON).`,
+    `Structure exactly:`,
+    `## Primary message`,
+    `One WhatsApp-ready message (under ~450 characters of plain text if you strip Markdown—keep it short on the phone).`,
+    `## Alternative A`,
+    `A shorter or softer variant.`,
+    `## Alternative B`,
+    `A different angle or urgency level.`,
+    `Formatting rules:`,
+    `- Under each ## section use 1–3 short paragraphs or a tight bullet list (- item) if it reads better on mobile.`,
+    `- No bracket placeholders like [Name]. Use generic wording or "Hi" without fake merge fields.`,
+    `- Tone: friendly, professional, no hype, clear CTA. Use **bold** sparingly for the CTA line only.`,
   );
   return parts.join('\n');
 };
