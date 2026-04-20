@@ -22,8 +22,8 @@ const PlainTextParser = ({ onCancel, onSuccess }) => {
                 text: text.trim()
             });
 
-            if (response.data && response.data.data) {
-                const extractedData = response.data.data;
+            const extractedData = response?.data || response?.data?.data;
+            if (extractedData) {
                 
                 // Format the data for ExtractedDetailsView
                 const formattedData = {
@@ -42,6 +42,8 @@ const PlainTextParser = ({ onCancel, onSuccess }) => {
 
                 setIsParsing(false);
                 if (onSuccess) onSuccess(formattedData, 'single');
+            } else {
+                setError('Could not extract customer details from text.');
             }
         } catch (err) {
             console.error('Error analyzing text:', err);
