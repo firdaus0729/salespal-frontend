@@ -42,6 +42,31 @@ const TIMELINE_ICONS = {
 
 const AGENTS = ['AI Agent', 'Alex Rep', 'Sarah Closer', 'Mike Seller', 'John Doe', 'Jane Smith'];
 
+/** Strip common AI email-style placeholders from WhatsApp drafts */
+function sanitizeWhatsappAiReply(text) {
+    let s = String(text || '');
+    s = s.replace(/\s*\[Your Name\]\s*/gi, ' ');
+    s = s.replace(/\s*\[(?:Your\s+)?Name\]\s*/gi, ' ');
+    s = s.replace(/\bBest regards,\s*$/gim, '');
+    s = s.replace(/\s{2,}/g, ' ').trim();
+    return s;
+}
+
+/** Keeps SpeechSynthesis in the same user-activation chain as the tap (needed after await fetch). */
+function primeSpeechSynthesisFromUserGesture() {
+    if (typeof window === 'undefined' || !window.speechSynthesis || typeof window.SpeechSynthesisUtterance === 'undefined') {
+        return;
+    }
+    try {
+        window.speechSynthesis.resume();
+        const u = new window.SpeechSynthesisUtterance('\u00A0');
+        u.volume = 0;
+        window.speechSynthesis.speak(u);
+    } catch (_) {
+        /* ignore */
+    }
+}
+
 /* ─── Small Components ───────────────────────────────────────── */
 const InfoRow = ({ label, value, icon: Icon }) => (
     <div className="flex items-start justify-between gap-2 py-2 border-b border-gray-50 last:border-0">
@@ -91,6 +116,10 @@ const SalesLeadWorkspace = () => {
     const [voiceSession, setVoiceSession] = useState(null);
     const speechRef = useRef(null);
     const recognitionRef = useRef(null);
+    /** Synchronous guard — state updates lag behind recognition.onend; prevents restart loops after End Call */
+    const callActiveRef = useRef(false);
+    const micMutedRef = useRef(false);
+    const listenRestartTimeoutRef = useRef(null);
     const [isListening, setIsListening] = useState(false);
     const [lastHeardText, setLastHeardText] = useState('');
     const [isProcessingTurn, setIsProcessingTurn] = useState(false);
@@ -110,6 +139,13 @@ const SalesLeadWorkspace = () => {
         setModal(type);
         if (type !== 'call') {
             setIsCallActive(false);
+        }
+    };
+
+    const clearPendingListenRestart = () => {
+        if (listenRestartTimeoutRef.current != null) {
+            clearTimeout(listenRestartTimeoutRef.current);
+            listenRestartTimeoutRef.current = null;
         }
     };
 
@@ -135,6 +171,7 @@ const SalesLeadWorkspace = () => {
     };
 
     const stopListening = () => {
+        clearPendingListenRestart();
         try {
             if (recognitionRef.current) {
                 recognitionRef.current.onresult = null;
@@ -153,6 +190,7 @@ const SalesLeadWorkspace = () => {
     const handleVoiceTurn = async (heardText) => {
         const text = String(heardText || '').trim();
         if (!text || !voiceSession?.conversationId || isProcessingTurn) return;
+        if (!callActiveRef.current) return;
 
         setIsProcessingTurn(true);
         try {
@@ -165,7 +203,7 @@ const SalesLeadWorkspace = () => {
             });
 
             const reply = turn?.assistant_reply ? String(turn.assistant_reply).trim() : '';
-            if (reply) {
+            if (reply && callActiveRef.current) {
                 addActionToLead(lead.id, 'call', 'AI Voice Reply', reply, { outcome: 'Responded' });
                 speakText(reply);
             }
@@ -182,7 +220,7 @@ const SalesLeadWorkspace = () => {
     };
 
     const startListening = async () => {
-        if (isListening || isMicMuted || !isCallActive) return;
+        if (isMicMuted || !callActiveRef.current) return;
         if (typeof window === 'undefined') return;
 
         const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -194,6 +232,21 @@ const SalesLeadWorkspace = () => {
             });
             return;
         }
+
+        if (recognitionRef.current) {
+            const prev = recognitionRef.current;
+            prev.onresult = null;
+            prev.onerror = null;
+            prev.onend = null;
+            try {
+                prev.stop();
+            } catch (_) {
+                /* ignore */
+            }
+            recognitionRef.current = null;
+        }
+        clearPendingListenRestart();
+        setIsListening(false);
 
         try {
             const recognition = new SpeechRecognition();
@@ -216,12 +269,14 @@ const SalesLeadWorkspace = () => {
 
             recognition.onend = () => {
                 setIsListening(false);
-                const shouldRestart = isCallActive && !isMicMuted;
-                if (shouldRestart) {
-                    setTimeout(() => {
+                if (!callActiveRef.current || micMutedRef.current) return;
+                clearPendingListenRestart();
+                listenRestartTimeoutRef.current = setTimeout(() => {
+                    listenRestartTimeoutRef.current = null;
+                    if (callActiveRef.current && !micMutedRef.current) {
                         startListening();
-                    }, 300);
-                }
+                    }
+                }, 300);
             };
 
             recognitionRef.current = recognition;
@@ -246,6 +301,7 @@ const SalesLeadWorkspace = () => {
             });
             return;
         }
+        primeSpeechSynthesisFromUserGesture();
         setStartingLiveCall(true);
         try {
             const response = await api.post('/ai/voice/session/start', {
@@ -259,9 +315,9 @@ const SalesLeadWorkspace = () => {
                 leadId: response?.lead_id,
                 conversationId: response?.conversation_id,
             });
+            callActiveRef.current = true;
             setIsCallActive(true);
             if (response?.assistant_reply) speakText(response.assistant_reply);
-            await startListening();
             addActionToLead(
                 lead.id,
                 'call',
@@ -269,8 +325,8 @@ const SalesLeadWorkspace = () => {
                 response?.assistant_reply || 'AI call started for this lead.',
                 { outcome: 'Queued', duration: '0m 00s' }
             );
-            setModal(null);
         } catch (err) {
+            callActiveRef.current = false;
             addActionToLead(
                 lead.id,
                 'call',
@@ -288,7 +344,10 @@ const SalesLeadWorkspace = () => {
         }
     };
 
-    const endLiveAICall = async () => {
+    const endLiveAICall = () => {
+        clearPendingListenRestart();
+        callActiveRef.current = false;
+        setIsProcessingTurn(false);
         stopListening();
         stopSpeaking();
         setIsCallActive(false);
@@ -312,9 +371,10 @@ const SalesLeadWorkspace = () => {
         try {
             addActionToLead(lead.id, 'whatsapp', 'WhatsApp sent', text, { sender: 'SalesRep' });
             const ai = await api.post('/ai/chat', {
-                message: `Lead name: ${lead.name}\nUser message: ${text}\nGenerate a concise, professional WhatsApp reply from sales rep perspective.`,
+                context: 'whatsapp',
+                message: `Lead name: ${lead.name}\nTheir message: ${text}\nWrite a concise WhatsApp reply as the sales rep (no email-style sign-off).`,
             });
-            const aiReply = ai?.response ? String(ai.response).trim() : null;
+            const aiReply = ai?.response ? sanitizeWhatsappAiReply(ai.response) : null;
             if (aiReply) {
                 addActionToLead(lead.id, 'whatsapp', 'AI WhatsApp follow-up', aiReply, { sender: 'AI' });
                 if (ai?.fallback) {
@@ -387,6 +447,10 @@ const SalesLeadWorkspace = () => {
         };
         loadReadiness();
     }, []);
+
+    useEffect(() => {
+        micMutedRef.current = isMicMuted;
+    }, [isMicMuted]);
 
     useEffect(() => {
         if (!isCallActive || isMicMuted) {
