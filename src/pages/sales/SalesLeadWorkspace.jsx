@@ -1,5 +1,5 @@
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useSales } from '../../context/SalesContext';
 import {
@@ -135,6 +135,7 @@ const SectionCard = ({ title, icon: Icon, iconColor, children, className = '' })
 const SalesLeadWorkspace = () => {
     const { id } = useParams();
     const navigate = useNavigate();
+    const location = useLocation();
     const { leads, updateLeadStatus, addActionToLead, assignLead } = useSales();
     const { showToast } = useToast();
 
@@ -206,6 +207,15 @@ const SalesLeadWorkspace = () => {
             setIsCallActive(false);
         }
     };
+
+    /** Open Call / WhatsApp / Schedule / Note when arriving from leads table (`navigate(..., { state: { openModal } })`) */
+    useEffect(() => {
+        const m = location.state?.openModal;
+        if (!lead || !m) return;
+        if (!['call', 'whatsapp', 'schedule', 'note'].includes(m)) return;
+        openModal(m);
+        navigate(`/sales/leads/${id}`, { replace: true, state: {} });
+    }, [lead, id, navigate, location.state?.openModal]);
 
     const clearPendingListenRestart = () => {
         if (listenRestartTimeoutRef.current != null) {

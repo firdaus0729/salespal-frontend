@@ -132,6 +132,9 @@ const SalesCampaignDetails = () => {
   const [generatingMessage, setGeneratingMessage] = useState(false);
 
   const [savingComm, setSavingComm] = useState(false);
+  const [workspaceError, setWorkspaceError] = useState(null);
+  const [leadFormError, setLeadFormError] = useState(null);
+  const [updatingCampaignStatus, setUpdatingCampaignStatus] = useState(false);
 
   // Add Lead modal states
   const [addMethod, setAddMethod] = useState(null); // null | 'csv' | 'pdf' | 'manual'
@@ -195,7 +198,7 @@ const SalesCampaignDetails = () => {
   // Hydrate workspace state from campaign metadata once campaign loads
   useEffect(() => {
     const md = campaign?.metadata || {};
-    setWebsiteUrl(md.website_url || '');
+    setWebsiteUrl(md.website_url || md.websiteUrl || '');
     setCallingEnabled(Boolean(md.calling_enabled));
     setCallingGoal(md.calling_goal || '');
     setCallingAudience(md.calling_audience || '');
@@ -215,7 +218,8 @@ const SalesCampaignDetails = () => {
     setLeadsLoading(true);
     try {
       const data = await api.get(`/sales/campaigns/${campaignId}/leads`);
-      setManualLeads(Array.isArray(data) ? data : []);
+      const list = Array.isArray(data?.leads) ? data.leads : Array.isArray(data) ? data : [];
+      setManualLeads(list);
     } catch {
       setManualLeads([]);
     } finally {
@@ -297,30 +301,24 @@ const SalesCampaignDetails = () => {
     e.preventDefault();
     if (!leadForm.name.trim() || !leadForm.phone.trim()) return;
     setSavingLead(true);
+    setLeadFormError(null);
     try {
-      const created = await api.post(`/sales/campaigns/${campaignId}/leads`, {
+      await api.post(`/sales/campaigns/${campaignId}/leads`, {
         name: leadForm.name.trim(),
         phone: leadForm.phone.trim(),
         email: leadForm.email?.trim() || null,
       });
       setLeadForm({ name: '', phone: '', email: '' });
-      
-      // Immediately add to manual leads and switch to leads view
-      if (created?.id) {
-        setManualLeads((prev) => [created, ...prev]);
-      } else {
-        await fetchLeads();
-      }
-      
-      // Switch to leads view to show the new lead
+      await fetchLeads();
       setActiveView('leads');
-      
       setUploadSuccess('Lead added successfully');
       setTimeout(() => {
         setAddOpen(false);
         setAddMethod(null);
         setUploadSuccess(null);
       }, 1500);
+    } catch (err) {
+      setLeadFormError(err?.message || 'Failed to add lead');
     } finally {
       setSavingLead(false);
     }
@@ -395,9 +393,13 @@ const SalesCampaignDetails = () => {
   const saveWebsite = async () => {
     if (!websiteUrl.trim()) return;
     setSavingWebsite(true);
+    setWorkspaceError(null);
     try {
       const updated = await api.post(`/sales/campaigns/${campaignId}/website`, { websiteUrl: websiteUrl.trim() });
-      if (updated?.id) setCampaign(updated);
+      const camp = updated?.campaign ?? updated;
+      if (camp?.id) setCampaign(camp);
+    } catch (e) {
+      setWorkspaceError(e?.message || 'Failed to save website URL');
     } finally {
       setSavingWebsite(false);
     }
@@ -405,6 +407,7 @@ const SalesCampaignDetails = () => {
 
   const saveCommSetup = async () => {
     setSavingComm(true);
+    setWorkspaceError(null);
     try {
       const baseMd = campaign?.metadata || {};
       const nextMd = {
@@ -420,23 +423,36 @@ const SalesCampaignDetails = () => {
       };
       const updated = await api.put(`/marketing/campaigns/${campaignId}`, { metadata: nextMd });
       if (updated?.id) setCampaign(updated);
+    } catch (e) {
+      setWorkspaceError(e?.message || 'Failed to save setup');
     } finally {
       setSavingComm(false);
     }
   };
 
   const setCampaignStatus = async (status) => {
-    const updated = await api.put(`/marketing/campaigns/${campaignId}`, { status });
-    if (updated?.id) setCampaign(updated);
+    setUpdatingCampaignStatus(true);
+    setWorkspaceError(null);
+    try {
+      const updated = await api.put(`/marketing/campaigns/${campaignId}`, { status });
+      if (updated?.id) setCampaign(updated);
+    } catch (e) {
+      setWorkspaceError(e?.message || 'Failed to update campaign status');
+    } finally {
+      setUpdatingCampaignStatus(false);
+    }
   };
 
   const generateCallingScript = async () => {
     setGeneratingScript(true);
+    setWorkspaceError(null);
     try {
       const prompt = buildScriptPrompt({ goal: callingGoal, audience: callingAudience, websiteUrl: websiteUrl?.trim() });
-      const res = await api.post('/ai/chat', { message: prompt, context: { campaignId } });
+      const res = await api.post('/ai/chat', { message: prompt });
       const text = res?.response || '';
       setCallingScript(text);
+    } catch (e) {
+      setWorkspaceError(e?.message || 'Failed to generate script');
     } finally {
       setGeneratingScript(false);
     }
@@ -444,11 +460,14 @@ const SalesCampaignDetails = () => {
 
   const generateWhatsApp = async () => {
     setGeneratingMessage(true);
+    setWorkspaceError(null);
     try {
       const prompt = buildWhatsAppPrompt({ goal: waGoal, offerDetails: waOffer, websiteUrl: websiteUrl?.trim() });
-      const res = await api.post('/ai/chat', { message: prompt, context: { campaignId } });
+      const res = await api.post('/ai/chat', { message: prompt });
       const text = res?.response || '';
       setWaMessage(text);
+    } catch (e) {
+      setWorkspaceError(e?.message || 'Failed to generate WhatsApp message');
     } finally {
       setGeneratingMessage(false);
     }
@@ -590,7 +609,7 @@ const SalesCampaignDetails = () => {
       setFbFormOpen(false);
       setFbFormName('');
     } catch (err) {
-      setFbFormError(err?.response?.data?.error?.message || err?.message || 'Failed to create form');
+      setFbFormError(err?.message || 'Failed to create form');
     } finally {
       setCreatingForm(false);
     }
@@ -642,6 +661,7 @@ const SalesCampaignDetails = () => {
               setCsvFile(null);
               setPdfFile(null);
               setUploadSuccess(null);
+              setLeadFormError(null);
             }}
           >
             <motion.div
@@ -661,12 +681,14 @@ const SalesCampaignDetails = () => {
                   </div>
                 </div>
                 <button
+                  type="button"
                   onClick={() => {
                     setAddOpen(false);
                     setAddMethod(null);
                     setCsvFile(null);
                     setPdfFile(null);
                     setUploadSuccess(null);
+                    setLeadFormError(null);
                   }}
                   className="text-gray-400 hover:text-gray-600 p-1.5 rounded-lg hover:bg-gray-100 transition-colors"
                 >
@@ -679,21 +701,33 @@ const SalesCampaignDetails = () => {
                 // Method Selection Screen
                 <div className="p-6 space-y-3">
                   <button
-                    onClick={() => setAddMethod('csv')}
+                    type="button"
+                    onClick={() => {
+                      setLeadFormError(null);
+                      setAddMethod('csv');
+                    }}
                     className="w-full p-4 border-2 border-gray-200 rounded-lg hover:border-blue-400 hover:bg-blue-50 transition-all text-left"
                   >
                     <p className="font-semibold text-gray-900 mb-1">📊 Upload CSV</p>
                     <p className="text-xs text-gray-500">Import multiple leads from spreadsheet</p>
                   </button>
                   <button
-                    onClick={() => setAddMethod('pdf')}
+                    type="button"
+                    onClick={() => {
+                      setLeadFormError(null);
+                      setAddMethod('pdf');
+                    }}
                     className="w-full p-4 border-2 border-gray-200 rounded-lg hover:border-green-400 hover:bg-green-50 transition-all text-left"
                   >
                     <p className="font-semibold text-gray-900 mb-1">📄 Upload PDF</p>
                     <p className="text-xs text-gray-500">Extract leads from PDF document</p>
                   </button>
                   <button
-                    onClick={() => setAddMethod('manual')}
+                    type="button"
+                    onClick={() => {
+                      setLeadFormError(null);
+                      setAddMethod('manual');
+                    }}
                     className="w-full p-4 border-2 border-gray-200 rounded-lg hover:border-indigo-400 hover:bg-indigo-50 transition-all text-left"
                   >
                     <p className="font-semibold text-gray-900 mb-1">✍️ Manual Entry</p>
@@ -785,6 +819,12 @@ const SalesCampaignDetails = () => {
               ) : (
                 // Manual Entry Form
                 <form onSubmit={saveLead} className="p-5 space-y-4">
+                  {leadFormError && (
+                    <div className="p-3 rounded-lg text-sm font-medium bg-red-50 text-red-700 border border-red-200">{leadFormError}</div>
+                  )}
+                  {uploadSuccess && !leadFormError && (
+                    <div className="p-3 rounded-lg text-sm font-medium bg-emerald-50 text-emerald-700 border border-emerald-200">{uploadSuccess}</div>
+                  )}
                   <div>
                     <label className="text-xs font-bold text-gray-500 uppercase tracking-wide block mb-1.5">Name</label>
                     <input
@@ -859,7 +899,10 @@ const SalesCampaignDetails = () => {
               <Users size={16} className="text-gray-500" /> {activeView === 'leads' ? 'Back to Details' : 'View Leads'}
             </button>
             <button
-              onClick={() => setAddOpen(true)}
+              onClick={() => {
+                setLeadFormError(null);
+                setAddOpen(true);
+              }}
               className="inline-flex items-center gap-2 px-3.5 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold rounded-lg transition-colors"
             >
               <Plus size={16} /> Add Lead
@@ -878,6 +921,11 @@ const SalesCampaignDetails = () => {
         </div>
       ) : (
         <>
+          {workspaceError && (
+            <div className="mb-4 text-sm text-red-700 bg-red-50 border border-red-200 rounded-lg px-4 py-3" role="alert">
+              {workspaceError}
+            </div>
+          )}
           {activeView === 'details' ? (
             /* ─── 3-Panel Workspace ─── */
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
@@ -1232,20 +1280,26 @@ const SalesCampaignDetails = () => {
                     {/* Action Buttons */}
                     <div className="flex items-center gap-2 mt-4 flex-wrap">
                       <button
+                        type="button"
                         onClick={() => setCampaignStatus('active')}
-                        className="inline-flex items-center gap-2 px-3.5 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold rounded-lg transition-colors"
+                        disabled={updatingCampaignStatus}
+                        className="inline-flex items-center gap-2 px-3.5 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold rounded-lg transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
                       >
                         <Play size={14} /> Start Campaign
                       </button>
                       <button
+                        type="button"
                         onClick={() => setCampaignStatus('paused')}
-                        className="inline-flex items-center gap-2 px-3.5 py-2 bg-gray-900 hover:bg-gray-800 text-white text-sm font-semibold rounded-lg transition-colors"
+                        disabled={updatingCampaignStatus}
+                        className="inline-flex items-center gap-2 px-3.5 py-2 bg-gray-900 hover:bg-gray-800 text-white text-sm font-semibold rounded-lg transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
                       >
                         <Pause size={14} /> Pause Campaign
                       </button>
                       <button
+                        type="button"
                         onClick={() => setCampaignStatus('active')}
-                        className="inline-flex items-center gap-2 px-3.5 py-2 bg-gray-100 hover:bg-gray-200 text-gray-800 text-sm font-semibold rounded-lg border border-gray-200 transition-colors"
+                        disabled={updatingCampaignStatus}
+                        className="inline-flex items-center gap-2 px-3.5 py-2 bg-gray-100 hover:bg-gray-200 text-gray-800 text-sm font-semibold rounded-lg border border-gray-200 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
                       >
                         <RotateCcw size={14} /> Resume Campaign
                       </button>

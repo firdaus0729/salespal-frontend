@@ -5,7 +5,7 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
     Search, Filter, ChevronRight, Phone, MessageSquare, Calendar,
-    X, Check, Mic, Volume2, Send, FileText, Edit3, ArrowUpDown,
+    X, Edit3, ArrowUpDown,
     SortAsc, Users, Plus
 } from 'lucide-react';
 
@@ -61,7 +61,7 @@ const StatusBadge = ({ status }) => {
 
 /* ─── Main Component ─────────────────────────────────────────── */
 const SalesLeads = () => {
-const { leads, updateLeadStatus, addActionToLead, addLead } = useSales();
+const { leads, updateLeadStatus, addLead } = useSales();
     const { showToast } = useToast();
     const navigate = useNavigate();
     const location = useLocation();
@@ -71,12 +71,6 @@ const { leads, updateLeadStatus, addActionToLead, addLead } = useSales();
     const [search, setSearch] = useState('');
     const [sort, setSort] = useState('newest');
     const [showSort, setShowSort] = useState(false);
-    const [actionModal, setActionModal] = useState(null);
-
-    // Modal form states
-    const [waText, setWaText] = useState('');
-    const [scheduleDate, setScheduleDate] = useState('');
-    const [noteText, setNoteText] = useState('');
 const [showAddLead, setShowAddLead] = useState(false);
     const [newLeadForm, setNewLeadForm] = useState({ name: '', phone: '', email: '', campaign: '' });
     const [addingLead, setAddingLead] = useState(false);
@@ -190,154 +184,13 @@ const [showAddLead, setShowAddLead] = useState(false);
         return list;
     }, [leads, filter, search, sort]);
 
-    /* ─── Action modal helpers ─── */
-    const openModal = (type, lead, e) => {
+    const goToLeadWorkspaceModal = (lead, openModal, e) => {
         e?.stopPropagation();
-        setWaText(''); setScheduleDate(''); setNoteText('');
-        setActionModal({ type, lead });
-    };
-
-    /* ─── Modal Renderer ─── */
-    const renderModal = () => {
-        if (!actionModal) return null;
-        const { type, lead } = actionModal;
-
-        return (
-            <AnimatePresence>
-                <motion.div
-                    initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-                    className="fixed inset-0 z-[80] flex items-center justify-center p-4 bg-gray-900/60 backdrop-blur-sm"
-                    onClick={() => setActionModal(null)}
-                >
-                    <motion.div
-                        initial={{ scale: 0.95, y: 16, opacity: 0 }}
-                        animate={{ scale: 1, y: 0, opacity: 1 }}
-                        exit={{ scale: 0.95, y: 16, opacity: 0 }}
-                        transition={{ type: 'spring', stiffness: 280, damping: 24 }}
-                        onClick={e => e.stopPropagation()}
-                        className={`bg-white rounded-2xl shadow-2xl overflow-hidden w-full ${type === 'whatsapp' ? 'max-w-md' : 'max-w-sm'}`}
-                    >
-                        {/* CALL */}
-                        {type === 'call' && (
-                            <div className="bg-gradient-to-b from-blue-900 to-blue-950 text-white flex flex-col">
-                                <button onClick={() => setActionModal(null)} className="absolute top-4 right-4 text-white/50 hover:text-white bg-white/10 p-2 rounded-full transition-colors"><X size={16} /></button>
-                                <div className="p-8 flex flex-col items-center text-center mt-2">
-                                    <div className="w-24 h-24 rounded-full bg-white/10 flex items-center justify-center mb-5 relative">
-                                        <div className="absolute inset-0 rounded-full border-4 border-emerald-400/40 animate-ping" />
-                                        <Phone size={36} className="text-white relative z-10" />
-                                    </div>
-                                    <h3 className="text-2xl font-bold">{lead?.name}</h3>
-                                    <p className="text-blue-200 text-sm mt-1 font-medium tracking-widest">{lead?.phone}</p>
-                                    <div className="flex items-center gap-2 mt-6 bg-white/10 border border-white/10 px-4 py-2 rounded-full text-emerald-300 text-sm font-semibold">
-                                        <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-                                        Connecting AI Agent...
-                                    </div>
-                                </div>
-                                <div className="flex justify-center gap-6 pb-10">
-                                    <button className="w-12 h-12 bg-white/10 hover:bg-white/20 rounded-full flex items-center justify-center text-white/70 hover:text-white transition-colors"><Mic size={22} /></button>
-                                    <button
-                                        onClick={() => { addActionToLead(lead.id, 'call', 'Outbound Call', 'Manual call placed.'); setActionModal(null); }}
-                                        className="w-16 h-16 bg-red-500 hover:bg-red-600 rounded-full flex items-center justify-center shadow-lg shadow-red-500/30 transition-transform hover:scale-105">
-                                        <Phone size={26} className="rotate-[135deg]" />
-                                    </button>
-                                    <button className="w-12 h-12 bg-white/10 hover:bg-white/20 rounded-full flex items-center justify-center text-white/70 hover:text-white transition-colors"><Volume2 size={22} /></button>
-                                </div>
-                            </div>
-                        )}
-
-                        {/* WHATSAPP */}
-                        {type === 'whatsapp' && (
-                            <div className="flex flex-col" style={{ minHeight: 400 }}>
-                                <div className="bg-[#075E54] text-white p-4 flex items-center gap-3">
-                                    <button onClick={() => setActionModal(null)} className="text-white/70 hover:text-white"><X size={20} /></button>
-                                    <div className="w-10 h-10 bg-white/20 rounded-full flex items-center justify-center font-bold text-lg shrink-0">{lead?.name?.[0]}</div>
-                                    <div>
-                                        <p className="font-bold text-sm">{lead?.name}</p>
-                                        <p className="text-xs text-white/60">{lead?.phone} · Online</p>
-                                    </div>
-                                </div>
-                                <div className="flex-1 bg-[#ECE5DD] p-4 flex flex-col gap-2 min-h-[180px]">
-                                    <div className="self-center">
-                                        <span className="bg-white/70 text-gray-500 text-[10px] font-semibold px-3 py-1 rounded-full shadow-sm">Today</span>
-                                    </div>
-                                    <div className="bg-[#DCF8C6] self-end max-w-[80%] p-2.5 rounded-xl rounded-tr-none shadow-sm text-sm text-gray-800">
-                                        Hello {lead?.name?.split(' ')[0]}, thanks for your interest! How can I help you? 👋
-                                        <p className="text-[10px] text-gray-400 text-right mt-0.5">Now · <Check size={10} className="inline text-blue-500" /></p>
-                                    </div>
-                                </div>
-                                <div className="p-3 bg-gray-100 border-t border-gray-200 flex items-center gap-2">
-                                    <div className="flex-1 bg-white flex items-center rounded-full px-3 py-2 shadow-sm border border-gray-200">
-                                        <input
-                                            type="text"
-                                            value={waText}
-                                            onChange={e => setWaText(e.target.value)}
-                                            onKeyDown={e => { if (e.key === 'Enter' && waText.trim()) { addActionToLead(lead.id, 'whatsapp', 'WhatsApp sent', waText.trim()); setActionModal(null); } }}
-                                            placeholder="Type a message..."
-                                            className="flex-1 text-sm bg-transparent outline-none"
-                                        />
-                                        <FileText size={15} className="text-gray-400 ml-2 shrink-0" />
-                                    </div>
-                                    <button
-                                        onClick={() => { if (waText.trim()) addActionToLead(lead.id, 'whatsapp', 'WhatsApp sent', waText.trim()); setActionModal(null); }}
-                                        className="w-10 h-10 bg-[#128C7E] hover:bg-[#075E54] text-white rounded-full flex items-center justify-center shadow-sm transition-colors">
-                                        <Send size={15} className="ml-0.5" />
-                                    </button>
-                                </div>
-                            </div>
-                        )}
-
-                        {/* SCHEDULE */}
-                        {type === 'schedule' && (
-                            <div className="p-6">
-                                <div className="flex items-center justify-between mb-5">
-                                    <h3 className="font-bold text-gray-900 flex items-center gap-2"><Calendar size={18} className="text-indigo-500" /> Schedule Follow-up</h3>
-                                    <button onClick={() => setActionModal(null)} className="text-gray-400 hover:text-gray-600 p-1.5 rounded-lg hover:bg-gray-100 transition-colors"><X size={16} /></button>
-                                </div>
-                                <p className="text-sm text-gray-500 mb-4">For <span className="font-semibold text-gray-800">{lead?.name}</span></p>
-                                <div className="space-y-3">
-                                    <div>
-                                        <label className="text-xs font-bold text-gray-500 uppercase tracking-wide block mb-1.5">Date</label>
-                                        <input type="date" value={scheduleDate} onChange={e => setScheduleDate(e.target.value)}
-                                            className="w-full p-3 border border-gray-200 rounded-lg text-sm bg-gray-50 outline-none focus:border-indigo-300 focus:ring-1 focus:ring-indigo-100" />
-                                    </div>
-                                    <button
-                                        onClick={() => { if (scheduleDate) addActionToLead(lead.id, 'meeting', 'Follow-up Scheduled', 'Meeting booked.', { date: scheduleDate }); setActionModal(null); }}
-                                        className="w-full py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded-lg text-sm transition-colors flex items-center justify-center gap-2">
-                                        <Check size={15} /> Confirm Follow-up
-                                    </button>
-                                </div>
-                            </div>
-                        )}
-
-                        {/* NOTE */}
-                        {type === 'note' && (
-                            <div className="p-6">
-                                <div className="flex items-center justify-between mb-5">
-                                    <h3 className="font-bold text-gray-900 flex items-center gap-2"><Edit3 size={16} className="text-gray-500" /> Add Note</h3>
-                                    <button onClick={() => setActionModal(null)} className="text-gray-400 hover:text-gray-600 p-1.5 rounded-lg hover:bg-gray-100 transition-colors"><X size={16} /></button>
-                                </div>
-                                <div className="space-y-3">
-                                    <textarea rows="4" value={noteText} onChange={e => setNoteText(e.target.value)}
-                                        placeholder={`Notes for ${lead?.name}...`}
-                                        className="w-full p-3 border border-gray-200 rounded-lg text-sm bg-gray-50 text-gray-900 placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-200 resize-none" />
-                                    <button
-                                        onClick={() => { if (noteText.trim()) addActionToLead(lead.id, 'note', 'Note Added', noteText.trim()); setActionModal(null); }}
-                                        className="w-full py-2.5 bg-gray-900 hover:bg-gray-800 text-white font-semibold rounded-lg text-sm transition-colors">
-                                        Save Note
-                                    </button>
-                                </div>
-                            </div>
-                        )}
-                    </motion.div>
-                </motion.div>
-            </AnimatePresence>
-        );
+        navigate(`/sales/leads/${lead.id}`, { state: { openModal } });
     };
 
     return (
         <div className="font-sans text-gray-900 pb-12">
-            {renderModal()}
-
             {/* Add Lead Modal */}
             <AnimatePresence>
                 {showAddLead && (
@@ -608,25 +461,45 @@ const [showAddLead, setShowAddLead] = useState(false);
 
                                     {/* Actions */}
                                     <td className="py-3.5 px-4 text-right whitespace-nowrap" onClick={e => e.stopPropagation()}>
-                                        <div className="flex items-center justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                                            <button onClick={e => openModal('call', lead, e)}
-                                                className="p-1.5 text-blue-500 hover:bg-blue-50 rounded-lg transition-colors" title="Call">
+                                        <div className="flex items-center justify-end gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                                            <button
+                                                type="button"
+                                                onClick={(e) => goToLeadWorkspaceModal(lead, 'call', e)}
+                                                className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-semibold bg-blue-600 text-white hover:bg-blue-700 shadow-sm transition-colors"
+                                                title="AI Call — same as workspace"
+                                            >
                                                 <Phone size={14} />
                                             </button>
-                                            <button onClick={e => openModal('whatsapp', lead, e)}
-                                                className="p-1.5 text-green-600 hover:bg-green-50 rounded-lg transition-colors" title="WhatsApp">
+                                            <button
+                                                type="button"
+                                                onClick={(e) => goToLeadWorkspaceModal(lead, 'whatsapp', e)}
+                                                className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-semibold bg-[#25D366] text-white hover:bg-[#128C7E] shadow-sm transition-colors"
+                                                title="WhatsApp — same as workspace"
+                                            >
                                                 <MessageSquare size={14} />
                                             </button>
-                                            <button onClick={e => openModal('schedule', lead, e)}
-                                                className="p-1.5 text-indigo-500 hover:bg-indigo-50 rounded-lg transition-colors" title="Schedule">
+                                            <button
+                                                type="button"
+                                                onClick={(e) => goToLeadWorkspaceModal(lead, 'schedule', e)}
+                                                className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-semibold bg-white text-gray-700 border border-gray-200 hover:bg-gray-50 shadow-sm transition-colors"
+                                                title="Schedule — same as workspace"
+                                            >
                                                 <Calendar size={14} />
                                             </button>
-                                            <button onClick={e => openModal('note', lead, e)}
-                                                className="p-1.5 text-gray-500 hover:bg-gray-100 rounded-lg transition-colors" title="Note">
+                                            <button
+                                                type="button"
+                                                onClick={(e) => goToLeadWorkspaceModal(lead, 'note', e)}
+                                                className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-semibold bg-white text-gray-700 border border-gray-200 hover:bg-gray-50 shadow-sm transition-colors"
+                                                title="Note — same as workspace"
+                                            >
                                                 <Edit3 size={14} />
                                             </button>
-                                            <button onClick={() => navigate(`/sales/leads/${lead.id}`)}
-                                                className="p-1.5 text-gray-400 hover:bg-gray-100 rounded-lg transition-colors border border-gray-200 ml-1" title="View Workspace">
+                                            <button
+                                                type="button"
+                                                onClick={() => navigate(`/sales/leads/${lead.id}`)}
+                                                className="p-1.5 text-gray-400 hover:bg-gray-100 rounded-lg transition-colors border border-gray-200 ml-0.5"
+                                                title="Open workspace"
+                                            >
                                                 <ChevronRight size={14} />
                                             </button>
                                         </div>
