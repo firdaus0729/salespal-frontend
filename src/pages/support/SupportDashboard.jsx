@@ -2,7 +2,22 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Loader2, ArrowUpRight, Ticket, CheckCircle, AlertCircle, Clock } from 'lucide-react';
 import api from '../../lib/api';
-import { mockTickets } from './mockSupportData';
+
+const toTitle = (value = '') => String(value).replace(/_/g, ' ').replace(/\b\w/g, (m) => m.toUpperCase());
+
+const normalizeTickets = (tickets = []) =>
+    (Array.isArray(tickets) ? tickets : []).map((t) => {
+        const md = t.metadata || {};
+        return {
+            ...t,
+            customer: md.customerName || 'Unknown Customer',
+            channel: md.channel || 'N/A',
+            category: toTitle(t.category || 'uncategorized'),
+            priority: toTitle(t.priority || 'medium'),
+            status: toTitle(t.status || 'open'),
+            date: t.created_at ? new Date(t.created_at).toLocaleDateString() : new Date().toLocaleDateString(),
+        };
+    });
 
 
 const SupportDashboard = () => {
@@ -13,49 +28,42 @@ const SupportDashboard = () => {
     useEffect(() => {
         async function fetchDashboard() {
             try {
-                // Fetch aggregate dashboard metrics directly
-                const data = await api.get('/support/analytics');
-                
-                if (!data || !data.recentTickets || data.recentTickets.length === 0) {
-                    const openTickets = mockTickets.filter(t => ["Open", "In Progress"].includes(t.status)).length;
-                    const resolvedTickets = mockTickets.filter(t => t.status === "Resolved").length;
-                    const escalations = mockTickets.filter(t => t.status === "Escalated").length;
-
-                    setDashboardData({
-                        metrics: [
-                            { title: 'Open Tickets', value: openTickets.toString() },
-                            { title: 'Resolved Tickets', value: resolvedTickets.toString() },
-                            { title: 'Escalations', value: escalations.toString() },
-                            { title: 'Avg Response Time', value: '2h' },
-                        ],
-                        categories: [
-                            { title: 'Queries', count: mockTickets.filter(t => t.category === 'Queries').length },
-                            { title: 'Complaints', count: mockTickets.filter(t => t.category === 'Complaints').length }
-                        ],
-                        recentTickets: mockTickets
-                    });
-                } else {
+                const data = await api.get('/support/analytics').catch(() => null);
+                if (data?.recentTickets?.length) {
                     setDashboardData(data);
+                    return;
                 }
-            } catch (err) {
-                console.error("Failed to fetch support dashboard data:", err);
-                
-                const openTickets = mockTickets.filter(t => ["Open", "In Progress"].includes(t.status)).length;
-                const resolvedTickets = mockTickets.filter(t => t.status === "Resolved").length;
-                const escalations = mockTickets.filter(t => t.status === "Escalated").length;
+
+                const ticketsRaw = await api.get('/support/tickets');
+                const normalized = normalizeTickets(ticketsRaw);
+                const openTickets = normalized.filter(t => ["Open", "In Progress"].includes(t.status)).length;
+                const resolvedTickets = normalized.filter(t => t.status === "Resolved" || t.status === "Closed").length;
+                const escalations = normalized.filter(t => t.priority === "High" || t.priority === "Urgent").length;
 
                 setDashboardData({
                     metrics: [
                         { title: 'Open Tickets', value: openTickets.toString() },
                         { title: 'Resolved Tickets', value: resolvedTickets.toString() },
                         { title: 'Escalations', value: escalations.toString() },
-                        { title: 'Avg Response Time', value: '2h' },
+                        { title: 'Avg Response Time', value: '—' },
                     ],
                     categories: [
-                        { title: 'Queries', count: mockTickets.filter(t => t.category === 'Queries').length },
-                        { title: 'Complaints', count: mockTickets.filter(t => t.category === 'Complaints').length }
+                        { title: 'Queries', count: normalized.filter(t => t.category === 'Queries').length },
+                        { title: 'Complaints', count: normalized.filter(t => t.category === 'Complaints').length }
                     ],
-                    recentTickets: mockTickets
+                    recentTickets: normalized.slice(0, 10)
+                });
+            } catch (err) {
+                console.error("Failed to fetch support dashboard data:", err);
+                setDashboardData({
+                    metrics: [
+                        { title: 'Open Tickets', value: '0' },
+                        { title: 'Resolved Tickets', value: '0' },
+                        { title: 'Escalations', value: '0' },
+                        { title: 'Avg Response Time', value: '—' },
+                    ],
+                    categories: [],
+                    recentTickets: []
                 });
             } finally {
                 setLoading(false);

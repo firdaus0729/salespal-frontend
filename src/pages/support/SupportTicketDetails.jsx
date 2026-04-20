@@ -2,7 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { ArrowLeft, User, MessageCircle, AlertCircle, Clock, CalendarDays, MoreVertical, Phone, Mail, Bell, Loader2 } from 'lucide-react';
 import api from '../../lib/api';
-import { mockTickets } from './mockSupportData';
+
+const toTitle = (value = '') => String(value).replace(/_/g, ' ').replace(/\b\w/g, (m) => m.toUpperCase());
 
 const SupportTicketDetails = () => {
     const { id } = useParams();
@@ -15,6 +16,10 @@ const SupportTicketDetails = () => {
     const [customerFeedback, setCustomerFeedback] = useState(null);
     const [activeTab, setActiveTab] = useState("customer");
     const [loading, setLoading] = useState(true);
+    const [error, setError] = useState('');
+    const [replyText, setReplyText] = useState('');
+    const [sending, setSending] = useState(false);
+    const [updatingStatus, setUpdatingStatus] = useState(false);
 
     const agents = [
         "Unassigned",
@@ -28,26 +33,14 @@ const SupportTicketDetails = () => {
         async function fetchTicketDetails() {
             try {
                 const data = await api.get(`/support/tickets/${id}`);
-                
-                const ticketData = data?.id ? data : mockTickets.find(t => t.id === id);
-                
-                if (ticketData) {
-                    setTicket(ticketData);
-                    setMessages(ticketData?.messages || []);
-                    setStatus(ticketData?.status || "Open");
-                    if (ticketData?.assignedAgent) {
-                        setAssignedAgent(ticketData.assignedAgent);
-                    }
-                }
+                if (!data?.id) throw new Error('Ticket not found');
+                setTicket(data);
+                setMessages(Array.isArray(data?.comments) ? data.comments : []);
+                setStatus(toTitle(data?.status || 'open'));
+                setError('');
             } catch (err) {
                 console.error("Failed to fetch ticket details:", err);
-                // On error, or empty, fallback to mock data
-                const mockTicket = mockTickets.find(t => t.id === id);
-                if (mockTicket) {
-                    setTicket(mockTicket);
-                    setMessages(mockTicket?.messages || []);
-                    setStatus(mockTicket?.status || "Open");
-                }
+                setError(err?.message || 'Failed to fetch ticket details');
             } finally {
                 setLoading(false);
             }
@@ -56,17 +49,55 @@ const SupportTicketDetails = () => {
     }, [id]);
 
     const handleStatusChange = async (newStatus) => {
+        const normalized =
+            newStatus === 'In Progress' ? 'in_progress'
+            : newStatus === 'Resolved' ? 'resolved'
+            : newStatus === 'Open' ? 'open'
+            : newStatus;
+
         try {
-            // Optimistic update
-            setStatus(newStatus);
-            // Assuming endpoint exists for updating status.
-            await api.patch(`/support/tickets/${id}`, { status: newStatus });
+            setUpdatingStatus(true);
+            setStatus(toTitle(normalized));
+            await api.put(`/support/tickets/${id}`, { status: normalized });
             setToastMessage("Status updated successfully");
         } catch (error) {
             console.error("Failed to update status", error);
             setToastMessage("Failed to update status");
+        } finally {
+            setUpdatingStatus(false);
         }
         setTimeout(() => setToastMessage(""), 3000);
+    };
+
+    const handleEscalate = async () => {
+        try {
+            setUpdatingStatus(true);
+            await api.put(`/support/tickets/${id}`, { status: 'in_progress', priority: 'urgent' });
+            setStatus('In Progress');
+            setToastMessage('Ticket escalated');
+        } catch (error) {
+            setToastMessage(error?.message || 'Failed to escalate ticket');
+        } finally {
+            setUpdatingStatus(false);
+            setTimeout(() => setToastMessage(""), 3000);
+        }
+    };
+
+    const handleSendReply = async () => {
+        const content = replyText.trim();
+        if (!content) return;
+        try {
+            setSending(true);
+            const created = await api.post(`/support/tickets/${id}/comments`, { content });
+            setMessages((prev) => [...prev, created]);
+            setReplyText('');
+            setToastMessage('Reply sent');
+        } catch (error) {
+            setToastMessage(error?.message || 'Failed to send reply');
+        } finally {
+            setSending(false);
+            setTimeout(() => setToastMessage(""), 3000);
+        }
     };
 
     const getStatusStyle = (status) => {
@@ -108,12 +139,12 @@ const SupportTicketDetails = () => {
     }
     
     // Safely extract ticket properties
-    const customer = ticket?.customer || {};
-    const customerName = customer.name || (typeof customer === 'string' ? customer : 'Unknown Customer');
-    const customerEmail = customer.email || `${customerName.toLowerCase().replace(/\s+/g, '.')}@example.com`;
-    const channel = ticket?.channel || 'Email';
-    const category = ticket?.category || 'Uncategorized';
-    const priority = ticket?.priority || 'Medium';
+    const md = ticket?.metadata || {};
+    const customerName = md.customerName || 'Unknown Customer';
+    const customerEmail = md.customerEmail || `${customerName.toLowerCase().replace(/\s+/g, '.')}@example.com`;
+    const channel = md.channel || 'Email';
+    const category = toTitle(ticket?.category || 'Uncategorized');
+    const priority = toTitle(ticket?.priority || 'Medium');
 
     return (
         <div className="w-full px-6 lg:px-8 xl:px-10 space-y-6">
@@ -128,7 +159,7 @@ const SupportTicketDetails = () => {
             {/* Page Header (Metadata Card) */}
             <div className="bg-white border border-gray-200 rounded-lg p-4 flex flex-wrap items-center justify-between shadow-sm">
                 <div>
-                    <h1 className="text-xl font-semibold text-gray-900">Ticket #TCK-{id || ticket?.id || 'Unknown'}</h1>
+                    <h1 className="text-xl font-semibold text-gray-900">Ticket #{ticket?.ticketNumber || `TCK-${String(id || '').slice(0, 8)}`}</h1>
                     <div className="flex flex-wrap items-center gap-3 text-sm text-gray-600 mt-2">
                         <div className="flex items-center gap-1.5 mr-2">
                             <User className="w-4 h-4 text-gray-400" /> 
@@ -147,7 +178,7 @@ const SupportTicketDetails = () => {
                             {priority} Priority
                         </span>
                         <span className="text-xs font-medium flex items-center gap-1.5 ml-1">
-                            <Clock className="w-3.5 h-3.5" /> {ticket?.date || 'N/A'}
+                            <Clock className="w-3.5 h-3.5" /> {ticket?.created_at ? new Date(ticket.created_at).toLocaleDateString() : 'N/A'}
                         </span>
                     </div>
                 </div>
@@ -182,22 +213,22 @@ const SupportTicketDetails = () => {
                         <div className="text-center text-sm text-gray-500 py-6">No messages in this ticket yet.</div>
                     ) : (
                         messages.map((msg, index) => (
-                            <div key={msg.id || index} className={`flex flex-col ${msg.role === 'agent' ? 'items-end' : 'items-start'}`}>
-                                {msg.role === 'customer' && index === 0 && (
+                            <div key={msg.id || index} className={`flex flex-col ${msg.is_internal ? 'items-end' : 'items-start'}`}>
+                                {!msg.is_internal && index === 0 && (
                                     <div className="text-xs text-gray-400 flex items-center gap-1 mb-1">
                                         <MessageCircle size={12} />
                                         {channel}
                                     </div>
                                 )}
                             <div className={`text-sm ${
-                                msg.role === 'agent' 
+                                msg.is_internal
                                 ? 'max-w-[70%] ml-auto bg-blue-600 text-white rounded-xl p-3 wrap-break-word shadow-sm' 
                                 : 'max-w-[70%] bg-gray-100 text-gray-800 rounded-xl p-3 wrap-break-word shadow-sm'
                             }`}>
-                                {msg.content}
+                                {msg.content || msg.message}
                             </div>
                             <div className="text-xs text-gray-400 mt-1">
-                                {msg.sender || (msg.role === 'agent' ? 'Support Agent' : customerName)} &bull; {msg.time || 'now'}
+                                {msg.author_name || (msg.is_internal ? 'Support Agent' : customerName)} &bull; {msg.created_at ? new Date(msg.created_at).toLocaleTimeString() : 'now'}
                             </div>
                         </div>
                         ))
@@ -207,37 +238,47 @@ const SupportTicketDetails = () => {
                 {/* Reply Box Inline */}
                 <div className="border-t border-gray-200 pt-3 mt-3 flex items-end gap-3 flex-wrap sticky bottom-0 bg-white pb-2 z-10">
                     <textarea 
+                        value={replyText}
+                        onChange={(e) => setReplyText(e.target.value)}
                         className="flex-1 border border-gray-300 rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 resize-none"
                         rows={2}
                         placeholder="Type your reply..."
                     />
-                    <button className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-md text-sm shrink-0">
-                        Send
+                    <button
+                        onClick={handleSendReply}
+                        disabled={!replyText.trim() || sending}
+                        className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-md text-sm shrink-0 disabled:opacity-60"
+                    >
+                        {sending ? 'Sending...' : 'Send'}
                     </button>
                     
                     {/* Ticket Actions */}
                     <div className="flex items-center gap-2 ml-auto w-full sm:w-auto mt-2 sm:mt-0">
                         <button 
                             onClick={() => handleStatusChange("In Progress")}
-                            className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-md text-sm"
+                            disabled={updatingStatus}
+                            className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-md text-sm disabled:opacity-60"
                         >
                             Mark In Progress
                         </button>
                         <button 
                             onClick={() => handleStatusChange("Resolved")}
-                            className="border border-gray-300 text-gray-700 bg-white px-4 py-2 rounded-md text-sm"
+                            disabled={updatingStatus}
+                            className="border border-gray-300 text-gray-700 bg-white px-4 py-2 rounded-md text-sm disabled:opacity-60"
                         >
                             Resolve Ticket
                         </button>
                         <button 
-                            onClick={() => handleStatusChange("Escalated")}
-                            className="border border-red-200 text-red-600 bg-red-50 px-4 py-2 rounded-md text-sm"
+                            onClick={handleEscalate}
+                            disabled={updatingStatus}
+                            className="border border-red-200 text-red-600 bg-red-50 px-4 py-2 rounded-md text-sm disabled:opacity-60"
                         >
                             Escalate Ticket
                         </button>
                     </div>
                 </div>
                 {toastMessage && <p className="text-xs text-green-600 mt-2">{toastMessage}</p>}
+                {error && <p className="text-xs text-red-600 mt-2">{error}</p>}
             </div>
 
             {/* Customer Feedback Card (Visible only when Resolved) */}
