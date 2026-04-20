@@ -127,6 +127,8 @@ const SalesLeadWorkspace = () => {
     const [isCallActive, setIsCallActive] = useState(false);
     const [voiceSession, setVoiceSession] = useState(null);
     const speechRef = useRef(null);
+    /** Live volume for current utterance (mute speaker must not cancel speech / onEnd) */
+    const isSpeakerMutedRef = useRef(false);
     const recognitionRef = useRef(null);
     /** Synchronous guard — state updates lag behind recognition.onend; prevents restart loops after End Call */
     const callActiveRef = useRef(false);
@@ -189,7 +191,7 @@ const SalesLeadWorkspace = () => {
     };
 
     const speakText = (text, onEnd) => {
-        if (!text || isSpeakerMuted) {
+        if (!text) {
             if (typeof onEnd === 'function') onEnd();
             return;
         }
@@ -201,7 +203,7 @@ const SalesLeadWorkspace = () => {
         const utterance = new window.SpeechSynthesisUtterance(text);
         utterance.rate = 1;
         utterance.pitch = 1;
-        utterance.volume = 1;
+        utterance.volume = isSpeakerMutedRef.current ? 0 : 1;
         utterance.onend = () => {
             speechRef.current = null;
             if (typeof onEnd === 'function') onEnd();
@@ -496,7 +498,11 @@ const SalesLeadWorkspace = () => {
     };
 
     useEffect(() => {
-        if (isSpeakerMuted) stopSpeaking();
+        isSpeakerMutedRef.current = isSpeakerMuted;
+        const u = speechRef.current;
+        if (u && typeof u.volume === 'number') {
+            u.volume = isSpeakerMuted ? 0 : 1;
+        }
     }, [isSpeakerMuted]);
 
     useEffect(() => {
