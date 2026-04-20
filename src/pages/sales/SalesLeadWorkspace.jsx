@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useSales } from '../../context/SalesContext';
@@ -53,6 +53,18 @@ function sanitizeWhatsappAiReply(text) {
 }
 
 /** Keeps SpeechSynthesis in the same user-activation chain as the tap (needed after await fetch). */
+/** Map WhatsApp UI history to OpenAI-style roles for /ai/chat */
+function buildWhatsappChatHistory(history) {
+    const out = [];
+    for (const m of history || []) {
+        const text = String(m?.text || '').trim();
+        if (!text) continue;
+        const role = m.sender === 'AI' ? 'assistant' : 'user';
+        out.push({ role, content: text.slice(0, 8000) });
+    }
+    return out.slice(-40);
+}
+
 function primeSpeechSynthesisFromUserGesture() {
     if (typeof window === 'undefined' || !window.speechSynthesis || typeof window.SpeechSynthesisUtterance === 'undefined') {
         return;
@@ -126,6 +138,16 @@ const SalesLeadWorkspace = () => {
     const voiceCallDismissedRef = useRef(false);
     /** Stops duplicate onresult bursts from firing multiple /voice/session/turn requests */
     const lastVoiceDupRef = useRef({ text: '', at: 0 });
+    /** Mic only after AI finishes speaking (opener or reply); blocks talking over the lead */
+    const voiceMicAllowedRef = useRef(false);
+    const [voiceMicAllowed, setVoiceMicAllowed] = useState(false);
+    /** True while waiting on /voice/session/turn or TTS for that turn */
+    const aiVoiceBusyRef = useRef(false);
+    const setAllowVoiceMic = (v) => {
+        voiceMicAllowedRef.current = v;
+        setVoiceMicAllowed(v);
+    };
+    const waMessagesEndRef = useRef(null);
     const [isListening, setIsListening] = useState(false);
     const [lastHeardText, setLastHeardText] = useState('');
     const [isProcessingTurn, setIsProcessingTurn] = useState(false);
@@ -144,6 +166,7 @@ const SalesLeadWorkspace = () => {
         setWaText(''); setScheduleDate(''); setScheduleTime(''); setNoteText('');
         if (type === 'call') {
             voiceCallDismissedRef.current = false;
+            setAllowVoiceMic(false);
         }
         setModal(type);
         if (type !== 'call') {
@@ -165,9 +188,13 @@ const SalesLeadWorkspace = () => {
         speechRef.current = null;
     };
 
-    const speakText = (text) => {
-        if (!text || isSpeakerMuted) return;
+    const speakText = (text, onEnd) => {
+        if (!text || isSpeakerMuted) {
+            if (typeof onEnd === 'function') onEnd();
+            return;
+        }
         if (typeof window === 'undefined' || !window.speechSynthesis || typeof window.SpeechSynthesisUtterance === 'undefined') {
+            if (typeof onEnd === 'function') onEnd();
             return;
         }
         stopSpeaking();
@@ -175,6 +202,14 @@ const SalesLeadWorkspace = () => {
         utterance.rate = 1;
         utterance.pitch = 1;
         utterance.volume = 1;
+        utterance.onend = () => {
+            speechRef.current = null;
+            if (typeof onEnd === 'function') onEnd();
+        };
+        utterance.onerror = () => {
+            speechRef.current = null;
+            if (typeof onEnd === 'function') onEnd();
+        };
         speechRef.current = utterance;
         window.speechSynthesis.speak(utterance);
     };
@@ -206,6 +241,9 @@ const SalesLeadWorkspace = () => {
         }
         lastVoiceDupRef.current = { text, at: now };
 
+        aiVoiceBusyRef.current = true;
+        setAllowVoiceMic(false);
+        stopListening();
         setIsProcessingTurn(true);
         try {
             addActionToLead(lead.id, 'call', 'Lead Spoke', text, { outcome: 'In conversation' });
@@ -219,22 +257,31 @@ const SalesLeadWorkspace = () => {
             const reply = turn?.assistant_reply ? String(turn.assistant_reply).trim() : '';
             if (reply && callActiveRef.current) {
                 addActionToLead(lead.id, 'call', 'AI Voice Reply', reply, { outcome: 'Responded' });
-                speakText(reply);
+                speakText(reply, () => {
+                    aiVoiceBusyRef.current = false;
+                    if (callActiveRef.current) setAllowVoiceMic(true);
+                    setIsProcessingTurn(false);
+                });
+            } else {
+                aiVoiceBusyRef.current = false;
+                if (callActiveRef.current) setAllowVoiceMic(true);
+                setIsProcessingTurn(false);
             }
         } catch (err) {
+            aiVoiceBusyRef.current = false;
+            if (callActiveRef.current) setAllowVoiceMic(true);
+            setIsProcessingTurn(false);
             addActionToLead(lead.id, 'call', 'AI Voice Turn Failed', err?.message || 'Could not process voice turn.');
             showToast({
                 title: 'Voice turn failed',
                 description: err?.message || 'Could not process your speech input.',
                 variant: 'error',
             });
-        } finally {
-            setIsProcessingTurn(false);
         }
     };
 
     const startListening = async () => {
-        if (isMicMuted || !callActiveRef.current) return;
+        if (isMicMuted || !callActiveRef.current || !voiceMicAllowedRef.current) return;
         if (typeof window === 'undefined') return;
 
         const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -266,7 +313,7 @@ const SalesLeadWorkspace = () => {
             const recognition = new SpeechRecognition();
             recognition.lang = 'en-IN';
             recognition.interimResults = false;
-            recognition.continuous = true;
+            recognition.continuous = false;
             recognition.maxAlternatives = 1;
 
             recognition.onresult = async (event) => {
@@ -284,13 +331,19 @@ const SalesLeadWorkspace = () => {
             recognition.onend = () => {
                 setIsListening(false);
                 if (!callActiveRef.current || micMutedRef.current) return;
+                if (!voiceMicAllowedRef.current || aiVoiceBusyRef.current) return;
                 clearPendingListenRestart();
                 listenRestartTimeoutRef.current = setTimeout(() => {
                     listenRestartTimeoutRef.current = null;
-                    if (callActiveRef.current && !micMutedRef.current) {
+                    if (
+                        callActiveRef.current &&
+                        !micMutedRef.current &&
+                        voiceMicAllowedRef.current &&
+                        !aiVoiceBusyRef.current
+                    ) {
                         startListening();
                     }
-                }, 300);
+                }, 350);
             };
 
             recognitionRef.current = recognition;
@@ -339,7 +392,17 @@ const SalesLeadWorkspace = () => {
             });
             callActiveRef.current = true;
             setIsCallActive(true);
-            if (response?.assistant_reply) speakText(response.assistant_reply);
+            setAllowVoiceMic(false);
+            const opener = response?.assistant_reply ? String(response.assistant_reply).trim() : '';
+            if (opener) {
+                speakText(opener, () => {
+                    if (callActiveRef.current && !voiceCallDismissedRef.current) {
+                        setAllowVoiceMic(true);
+                    }
+                });
+            } else {
+                setAllowVoiceMic(true);
+            }
             addActionToLead(
                 lead.id,
                 'call',
@@ -372,6 +435,8 @@ const SalesLeadWorkspace = () => {
     const endLiveAICall = () => {
         voiceSessionStartLockRef.current = false;
         lastVoiceDupRef.current = { text: '', at: 0 };
+        aiVoiceBusyRef.current = false;
+        setAllowVoiceMic(false);
         clearPendingListenRestart();
         callActiveRef.current = false;
         setIsProcessingTurn(false);
@@ -396,10 +461,13 @@ const SalesLeadWorkspace = () => {
         }
         setSendingWhatsApp(true);
         try {
+            const waCommLocal = (lead.communications || []).find(c => c.type === 'whatsapp');
+            const priorHistory = buildWhatsappChatHistory(waCommLocal?.history || []);
             addActionToLead(lead.id, 'whatsapp', 'WhatsApp sent', text, { sender: 'SalesRep' });
             const ai = await api.post('/ai/chat', {
                 context: 'whatsapp',
-                message: `Lead name: ${lead.name}\nTheir message: ${text}\nWrite a concise WhatsApp reply as the sales rep (no email-style sign-off).`,
+                history: priorHistory,
+                message: `Lead name: ${lead.name}\nTheir latest message: ${text}\nWrite one concise WhatsApp reply as the sales rep (no email-style sign-off). One message only.`,
             });
             const aiReply = ai?.response ? sanitizeWhatsappAiReply(ai.response) : null;
             if (aiReply) {
@@ -480,12 +548,17 @@ const SalesLeadWorkspace = () => {
     }, [isMicMuted]);
 
     useEffect(() => {
-        if (!isCallActive || isMicMuted) {
+        if (!isCallActive || isMicMuted || !voiceMicAllowed) {
             stopListening();
             return;
         }
         startListening();
-    }, [isCallActive, isMicMuted]);
+    }, [isCallActive, isMicMuted, voiceMicAllowed]);
+
+    useLayoutEffect(() => {
+        if (modal !== 'whatsapp' || !lead) return;
+        waMessagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }, [modal, lead, sendingWhatsApp]);
 
     if (!lead) {
         return (
@@ -564,9 +637,11 @@ const SalesLeadWorkspace = () => {
                                             : isCallActive
                                               ? isProcessingTurn
                                                   ? 'Processing your speech…'
-                                                  : isListening
-                                                    ? 'Listening — speak naturally'
-                                                    : 'Connected — mic ready'
+                                                  : !voiceMicAllowed
+                                                    ? 'AI is speaking…'
+                                                    : isListening
+                                                      ? 'Listening — speak after the AI finishes'
+                                                      : 'Mic ready'
                                               : 'Ready — tap the green button to start'}
                                     </div>
                                     {isCallActive && lastHeardText ? (
@@ -621,16 +696,16 @@ const SalesLeadWorkspace = () => {
 
                         {/* WHATSAPP */}
                         {modal === 'whatsapp' && (
-                            <div className="flex flex-col" style={{ minHeight: 400 }}>
-                                <div className="bg-[#075E54] text-white p-4 flex items-center gap-3">
-                                    <button onClick={() => setModal(null)} className="text-white/70 hover:text-white"><X size={20} /></button>
+                            <div className="flex flex-col max-h-[min(90dvh,720px)] min-h-0" style={{ minHeight: 400 }}>
+                                <div className="bg-[#075E54] text-white p-4 flex items-center gap-3 shrink-0">
+                                    <button type="button" onClick={() => setModal(null)} className="text-white/70 hover:text-white"><X size={20} /></button>
                                     <div className="w-10 h-10 bg-white/20 rounded-full flex items-center justify-center font-bold text-lg shrink-0">{lead.name[0]}</div>
                                     <div>
                                         <p className="font-bold text-sm">{lead.name}</p>
                                         <p className="text-xs text-white/60">{lead.phone} · Online</p>
                                     </div>
                                 </div>
-                                <div className="flex-1 bg-[#ECE5DD] p-4 flex flex-col gap-2 min-h-[180px] overflow-y-auto">
+                                <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden bg-[#ECE5DD] p-4 flex flex-col gap-2">
                                     {waHistory.length > 0 ? waHistory.map(msg => (
                                         <div key={msg.id} className={`max-w-[80%] ${msg.sender === 'AI' ? 'self-start bg-white rounded-tl-none' : 'self-end bg-[#DCF8C6] rounded-tr-none'} p-2.5 rounded-xl shadow-sm text-sm text-gray-800`}>
                                             {msg.attachment && <p className="text-xs font-semibold text-blue-600 mb-1">📎 {msg.attachment}</p>}
@@ -638,8 +713,9 @@ const SalesLeadWorkspace = () => {
                                             <p className="text-[10px] text-gray-400 text-right mt-0.5">{msg.time}</p>
                                         </div>
                                     )) : (
-                                        <div className="flex-1 flex items-center justify-center text-gray-400 text-sm">Start a new conversation</div>
+                                        <div className="flex-1 flex items-center justify-center text-gray-400 text-sm min-h-[120px]">Start a new conversation</div>
                                     )}
+                                    <div ref={waMessagesEndRef} className="h-px w-full shrink-0" aria-hidden />
                                 </div>
                                 <div className="p-3 bg-gray-100 border-t border-gray-200 flex items-center gap-2">
                                     <div className="flex-1 bg-white flex items-center rounded-full px-3 py-2 shadow-sm border border-gray-200">
