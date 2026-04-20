@@ -185,6 +185,15 @@ const SalesLeadWorkspace = () => {
     const [isListening, setIsListening] = useState(false);
     const [lastHeardText, setLastHeardText] = useState('');
     const [isProcessingTurn, setIsProcessingTurn] = useState(false);
+    const [isWaAiTyping, setIsWaAiTyping] = useState(false);
+    const [liveCallTranscript, setLiveCallTranscript] = useState([]);
+    const waTypingTimeoutRef = useRef(null);
+    const callStartedAtRef = useRef(null);
+    const mediaRecorderRef = useRef(null);
+    const recordingChunksRef = useRef([]);
+    const recordingStreamRef = useRef(null);
+    const recordingUrlRef = useRef(null);
+    const playingAudioRef = useRef(null);
     /** Parsed from GET /integrations/readiness (calling.* only; ignores Google Ads blockers). */
     const [aiReadiness, setAiReadiness] = useState({
         loading: true,
@@ -222,6 +231,101 @@ const SalesLeadWorkspace = () => {
             clearTimeout(listenRestartTimeoutRef.current);
             listenRestartTimeoutRef.current = null;
         }
+    };
+
+    const clearWaTypingTimer = () => {
+        if (waTypingTimeoutRef.current != null) {
+            clearTimeout(waTypingTimeoutRef.current);
+            waTypingTimeoutRef.current = null;
+        }
+    };
+
+    const pushLiveTranscript = (speaker, text) => {
+        const line = String(text || '').trim();
+        if (!line) return;
+        setLiveCallTranscript((prev) => [...prev, { speaker, text: line }]);
+    };
+
+    const startCallRecording = async () => {
+        if (typeof window === 'undefined' || !navigator?.mediaDevices?.getUserMedia || typeof window.MediaRecorder === 'undefined') {
+            return;
+        }
+        try {
+            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            const recorder = new window.MediaRecorder(stream);
+            recordingChunksRef.current = [];
+            recorder.ondataavailable = (event) => {
+                if (event.data && event.data.size > 0) recordingChunksRef.current.push(event.data);
+            };
+            recorder.start();
+            mediaRecorderRef.current = recorder;
+            recordingStreamRef.current = stream;
+        } catch (err) {
+            showToast({
+                title: 'Recording unavailable',
+                description: err?.message || 'Microphone recording could not be started.',
+                variant: 'warning',
+            });
+        }
+    };
+
+    const stopCallRecording = async () => {
+        return new Promise((resolve) => {
+            const recorder = mediaRecorderRef.current;
+            if (!recorder) {
+                resolve(recordingUrlRef.current || null);
+                return;
+            }
+
+            const finalize = () => {
+                try {
+                    const blob = new Blob(recordingChunksRef.current || [], { type: 'audio/webm' });
+                    const url = blob.size > 0 ? URL.createObjectURL(blob) : null;
+                    recordingUrlRef.current = url;
+                    resolve(url);
+                } catch (_) {
+                    resolve(null);
+                }
+            };
+
+            recorder.onstop = finalize;
+            try {
+                recorder.stop();
+            } catch (_) {
+                finalize();
+            }
+
+            if (recordingStreamRef.current) {
+                recordingStreamRef.current.getTracks().forEach((t) => t.stop());
+                recordingStreamRef.current = null;
+            }
+            mediaRecorderRef.current = null;
+        });
+    };
+
+    const handlePlayRecording = (call) => {
+        if (!call?.recordingUrl) {
+            setPlayingId(playingId === call.id ? null : call.id);
+            return;
+        }
+        if (playingAudioRef.current && playingId === call.id) {
+            playingAudioRef.current.pause();
+            playingAudioRef.current = null;
+            setPlayingId(null);
+            return;
+        }
+        if (playingAudioRef.current) {
+            playingAudioRef.current.pause();
+            playingAudioRef.current = null;
+        }
+        const audio = new Audio(call.recordingUrl);
+        playingAudioRef.current = audio;
+        setPlayingId(call.id);
+        audio.onended = () => {
+            if (playingAudioRef.current === audio) playingAudioRef.current = null;
+            setPlayingId(null);
+        };
+        audio.play().catch(() => setPlayingId(null));
     };
 
     const stopSpeaking = () => {
@@ -294,6 +398,7 @@ const SalesLeadWorkspace = () => {
         setIsProcessingTurn(true);
         try {
             addActionToLead(lead.id, 'call', 'Lead Spoke', text, { outcome: 'In conversation' });
+            pushLiveTranscript('Lead', text);
             const turn = await api.post('/ai/voice/session/turn', {
                 brandId: voiceSession.brandId,
                 leadId: voiceSession.leadId,
@@ -304,6 +409,7 @@ const SalesLeadWorkspace = () => {
             const reply = turn?.assistant_reply ? String(turn.assistant_reply).trim() : '';
             if (reply && callActiveRef.current) {
                 addActionToLead(lead.id, 'call', 'AI Voice Reply', reply, { outcome: 'Responded' });
+                pushLiveTranscript('AI', reply);
                 speakText(reply, () => {
                     aiVoiceBusyRef.current = false;
                     if (callActiveRef.current) setAllowVoiceMic(true);
@@ -440,9 +546,14 @@ const SalesLeadWorkspace = () => {
             });
             callActiveRef.current = true;
             setIsCallActive(true);
+            setLiveCallTranscript([]);
+            callStartedAtRef.current = Date.now();
+            recordingUrlRef.current = null;
+            await startCallRecording();
             setAllowVoiceMic(false);
             const opener = response?.assistant_reply ? String(response.assistant_reply).trim() : '';
             if (opener) {
+                pushLiveTranscript('AI', opener);
                 speakText(opener, () => {
                     if (callActiveRef.current && !voiceCallDismissedRef.current) {
                         setAllowVoiceMic(true);
@@ -480,7 +591,7 @@ const SalesLeadWorkspace = () => {
         }
     };
 
-    const endLiveAICall = () => {
+    const endLiveAICall = async () => {
         voiceSessionStartLockRef.current = false;
         lastVoiceDupRef.current = { text: '', at: 0 };
         aiVoiceBusyRef.current = false;
@@ -492,7 +603,21 @@ const SalesLeadWorkspace = () => {
         stopSpeaking();
         setIsCallActive(false);
         setVoiceSession(null);
-        addActionToLead(lead.id, 'call', 'AI Voice Call Ended', 'Call ended by user.', { outcome: 'Completed' });
+        const recordingUrl = await stopCallRecording();
+        const startedAt = callStartedAtRef.current || Date.now();
+        const seconds = Math.max(1, Math.round((Date.now() - startedAt) / 1000));
+        const mm = Math.floor(seconds / 60);
+        const ss = String(seconds % 60).padStart(2, '0');
+        const duration = `${mm}m ${ss}s`;
+        addActionToLead(lead.id, 'call', 'AI Voice Call Completed', 'Call ended by user.', {
+            outcome: 'Completed',
+            duration,
+            recording: recordingUrl ? `Call_${String(lead.id).slice(0, 6)}_${Date.now()}.webm` : null,
+            recordingUrl,
+            transcript: liveCallTranscript,
+        });
+        setLiveCallTranscript([]);
+        callStartedAtRef.current = null;
         setModal(null);
     };
 
@@ -519,7 +644,14 @@ const SalesLeadWorkspace = () => {
             });
             const aiReply = ai?.response ? sanitizeWhatsappAiReply(ai.response) : null;
             if (aiReply) {
-                addActionToLead(lead.id, 'whatsapp', 'AI WhatsApp follow-up', aiReply, { sender: 'AI' });
+                setIsWaAiTyping(true);
+                clearWaTypingTimer();
+                const delay = Math.min(7000, Math.max(900, aiReply.length * 22));
+                waTypingTimeoutRef.current = setTimeout(() => {
+                    addActionToLead(lead.id, 'whatsapp', 'AI WhatsApp follow-up', aiReply, { sender: 'AI' });
+                    setIsWaAiTyping(false);
+                    waTypingTimeoutRef.current = null;
+                }, delay);
                 if (ai?.fallback) {
                     showToast({
                         title: 'AI fallback used',
@@ -531,7 +663,13 @@ const SalesLeadWorkspace = () => {
             setWaText('');
         } catch (err) {
             const fallbackReply = `Thanks for your message, ${lead.name.split(' ')[0] || 'there'}. Our team is reviewing this and will reply shortly.`;
-            addActionToLead(lead.id, 'whatsapp', 'AI WhatsApp follow-up', fallbackReply, { sender: 'AI' });
+            setIsWaAiTyping(true);
+            clearWaTypingTimer();
+            waTypingTimeoutRef.current = setTimeout(() => {
+                addActionToLead(lead.id, 'whatsapp', 'AI WhatsApp follow-up', fallbackReply, { sender: 'AI' });
+                setIsWaAiTyping(false);
+                waTypingTimeoutRef.current = null;
+            }, Math.min(4000, Math.max(900, fallbackReply.length * 20)));
             addActionToLead(lead.id, 'whatsapp', 'WhatsApp AI fallback', err?.message || 'AI service unavailable');
             showToast({
                 title: 'AI chat unavailable',
@@ -550,8 +688,17 @@ const SalesLeadWorkspace = () => {
 
     useEffect(() => {
         return () => {
+            clearWaTypingTimer();
             stopListening();
             stopSpeaking();
+            if (playingAudioRef.current) {
+                playingAudioRef.current.pause();
+                playingAudioRef.current = null;
+            }
+            if (recordingStreamRef.current) {
+                recordingStreamRef.current.getTracks().forEach((t) => t.stop());
+                recordingStreamRef.current = null;
+            }
         };
     }, []);
 
@@ -608,7 +755,7 @@ const SalesLeadWorkspace = () => {
     useLayoutEffect(() => {
         if (modal !== 'whatsapp' || !lead) return;
         waMessagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-    }, [modal, lead, sendingWhatsApp]);
+    }, [modal, lead, sendingWhatsApp, isWaAiTyping]);
 
     if (!lead) {
         return (
@@ -697,6 +844,16 @@ const SalesLeadWorkspace = () => {
                                     {isCallActive && lastHeardText ? (
                                         <div className="mt-3 text-xs text-blue-100/90">Heard: “{lastHeardText}”</div>
                                     ) : null}
+                                    <div className="mt-4 w-full max-w-sm bg-white/10 border border-white/10 rounded-xl p-3 max-h-36 overflow-y-auto">
+                                        {liveCallTranscript.length > 0 ? liveCallTranscript.slice(-8).map((line, idx) => (
+                                            <div key={`${line.speaker}-${idx}`} className="text-xs text-left mb-1.5 last:mb-0">
+                                                <span className="font-bold text-white/90">{line.speaker}:</span>{' '}
+                                                <span className="text-blue-100/95">{line.text}</span>
+                                            </div>
+                                        )) : (
+                                            <p className="text-xs text-blue-100/80">Live call history appears here.</p>
+                                        )}
+                                    </div>
                                 </div>
                                 <div className="flex justify-center gap-6 pb-10">
                                     <button
@@ -782,6 +939,11 @@ const SalesLeadWorkspace = () => {
                                         </div>
                                     )) : (
                                         <div className="flex-1 flex items-center justify-center text-gray-400 text-sm min-h-[120px]">Start a new conversation</div>
+                                    )}
+                                    {isWaAiTyping && (
+                                        <div className="max-w-[80%] self-start bg-white rounded-tl-none p-2.5 rounded-xl shadow-sm text-sm text-gray-700 border border-gray-100">
+                                            <p className="text-[11px] text-gray-500">SalesPal team is writing...</p>
+                                        </div>
                                     )}
                                     <div ref={waMessagesEndRef} className="h-px w-full shrink-0" aria-hidden />
                                 </div>
@@ -1175,7 +1337,7 @@ const SalesLeadWorkspace = () => {
                                         </div>
                                         {call.recording && (
                                             <div className="px-4 py-3 bg-indigo-50/60 border-b border-gray-100 flex items-center gap-3">
-                                                <button onClick={() => setPlayingId(playingId === call.id ? null : call.id)}
+                                                <button onClick={() => handlePlayRecording(call)}
                                                     className="w-8 h-8 bg-indigo-600 hover:bg-indigo-700 text-white rounded-full flex items-center justify-center shrink-0 transition-colors shadow-sm">
                                                     {playingId === call.id ? <Pause size={14} /> : <Play size={14} className="ml-0.5" />}
                                                 </button>
@@ -1190,7 +1352,16 @@ const SalesLeadWorkspace = () => {
                                                             className="h-full bg-indigo-600 rounded-full" />
                                                     </div>
                                                 </div>
-                                                <button className="p-1.5 text-indigo-500 hover:text-indigo-700 rounded hover:bg-indigo-100 transition-colors">
+                                                <button
+                                                    onClick={() => {
+                                                        if (!call.recordingUrl) return;
+                                                        const a = document.createElement('a');
+                                                        a.href = call.recordingUrl;
+                                                        a.download = call.recording || `call_recording_${call.id}.webm`;
+                                                        a.click();
+                                                    }}
+                                                    className="p-1.5 text-indigo-500 hover:text-indigo-700 rounded hover:bg-indigo-100 transition-colors"
+                                                >
                                                     <Download size={14} />
                                                 </button>
                                             </div>
@@ -1266,6 +1437,14 @@ const SalesLeadWorkspace = () => {
                                     </div>
                                 )) : (
                                     <div className="flex-1 flex items-center justify-center text-gray-400 text-sm">No messages yet</div>
+                                )}
+                                {isWaAiTyping && (
+                                    <div className="max-w-[78%] self-start">
+                                        <p className="text-[10px] font-semibold mb-0.5 text-indigo-600">AI</p>
+                                        <div className="p-2.5 rounded-xl shadow-sm text-sm bg-white text-gray-700 rounded-tl-none border border-gray-100">
+                                            SalesPal team is writing...
+                                        </div>
+                                    </div>
                                 )}
                             </div>
                             <div className="p-3 bg-gray-100 border-t border-gray-200 flex items-center gap-2">

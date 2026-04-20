@@ -286,7 +286,8 @@ export const SalesProvider = ({ children }) => {
                         duration: additionalData.duration || '0m 0s',
                         outcome: additionalData.outcome || 'Logged',
                         recording: additionalData.recording,
-                        transcript: additionalData.transcript
+                        recordingUrl: additionalData.recordingUrl || null,
+                        transcript: additionalData.transcript || []
                     },
                     ...updatedCommunications
                 ];
