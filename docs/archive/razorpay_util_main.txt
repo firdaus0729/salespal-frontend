@@ -16,7 +16,7 @@ if (!keyId || !keySecret || keyId.includes('YOUR_KEY') || keySecret.includes('YO
   logger.info('Razorpay initialized successfully');
 }
 
-/**
+/***
  * Returns the Razorpay instance, or throws if not configured.
  */
 function getInstance() {
