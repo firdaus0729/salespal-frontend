@@ -370,24 +370,24 @@ const SupportTicketDetails = () => {
                         <div className="mt-3 grid grid-cols-2 gap-3 text-sm">
                             <div>
                                 <p className="text-gray-500">Total Tickets</p>
-                                <p className="font-medium text-gray-900">{customer?.totalTickets || 1}</p>
+                                <p className="font-medium text-gray-900">{md.totalTickets || 1}</p>
                             </div>
                             <div>
                                 <p className="text-gray-500">Resolved</p>
-                                <p className="font-medium text-gray-900">{customer?.resolvedTickets || 0}</p>
+                                <p className="font-medium text-gray-900">{md.resolvedTickets || 0}</p>
                             </div>
                             <div>
                                 <p className="text-gray-500">Open</p>
-                                <p className="font-medium text-gray-900">{customer?.openTickets || 1}</p>
+                                <p className="font-medium text-gray-900">{md.openTickets || 1}</p>
                             </div>
                             <div>
                                 <p className="text-gray-500">Satisfaction</p>
-                                <p className="font-medium text-green-600">{customer?.satisfaction || 'N/A'}</p>
+                                <p className="font-medium text-green-600">{md.satisfaction || 'N/A'}</p>
                             </div>
                         </div>
 
                         <p className="text-xs text-gray-500 mt-3 border-t border-gray-100 pt-3">
-                            Customer since {customer?.since || '2022'}
+                            Customer since {md.since || '2022'}
                         </p>
                     </div>
                 )}
