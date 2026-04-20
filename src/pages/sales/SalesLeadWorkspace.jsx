@@ -65,6 +65,37 @@ function buildWhatsappChatHistory(history) {
     return out.slice(-40);
 }
 
+/** Mute AI TTS output without canceling (pause + volume). `utteranceRef` is { current: SpeechSynthesisUtterance | null } */
+function applySpeakerOutputMuteState(muted, utteranceRef) {
+    if (typeof window === 'undefined') return;
+    const syn = window.speechSynthesis;
+    if (!syn) return;
+    const u = utteranceRef?.current;
+    if (muted) {
+        if (u && typeof u.volume === 'number') {
+            u.volume = 0;
+        }
+        if (typeof syn.pause === 'function') {
+            try {
+                if (syn.speaking && !syn.paused) syn.pause();
+            } catch (_) {
+                /* ignore */
+            }
+        }
+    } else {
+        if (typeof syn.resume === 'function') {
+            try {
+                if (syn.paused) syn.resume();
+            } catch (_) {
+                /* ignore */
+            }
+        }
+        if (u && typeof u.volume === 'number') {
+            u.volume = 1;
+        }
+    }
+}
+
 function primeSpeechSynthesisFromUserGesture() {
     if (typeof window === 'undefined' || !window.speechSynthesis || typeof window.SpeechSynthesisUtterance === 'undefined') {
         return;
@@ -204,6 +235,9 @@ const SalesLeadWorkspace = () => {
         utterance.rate = 1;
         utterance.pitch = 1;
         utterance.volume = isSpeakerMutedRef.current ? 0 : 1;
+        utterance.onstart = () => {
+            applySpeakerOutputMuteState(isSpeakerMutedRef.current, speechRef);
+        };
         utterance.onend = () => {
             speechRef.current = null;
             if (typeof onEnd === 'function') onEnd();
@@ -237,6 +271,7 @@ const SalesLeadWorkspace = () => {
         const text = String(heardText || '').trim();
         if (!text || !voiceSession?.conversationId || isProcessingTurn) return;
         if (!callActiveRef.current) return;
+        if (micMutedRef.current) return;
         const now = Date.now();
         if (text === lastVoiceDupRef.current.text && now - lastVoiceDupRef.current.at < 1200) {
             return;
@@ -319,6 +354,7 @@ const SalesLeadWorkspace = () => {
             recognition.maxAlternatives = 1;
 
             recognition.onresult = async (event) => {
+                if (micMutedRef.current) return;
                 const result = event.results?.[event.resultIndex];
                 const transcript = result?.[0]?.transcript?.trim() || '';
                 if (!transcript) return;
@@ -499,10 +535,7 @@ const SalesLeadWorkspace = () => {
 
     useEffect(() => {
         isSpeakerMutedRef.current = isSpeakerMuted;
-        const u = speechRef.current;
-        if (u && typeof u.volume === 'number') {
-            u.volume = isSpeakerMuted ? 0 : 1;
-        }
+        applySpeakerOutputMuteState(isSpeakerMuted, speechRef);
     }, [isSpeakerMuted]);
 
     useEffect(() => {
@@ -551,6 +584,7 @@ const SalesLeadWorkspace = () => {
 
     useEffect(() => {
         micMutedRef.current = isMicMuted;
+        if (isMicMuted) stopListening();
     }, [isMicMuted]);
 
     useEffect(() => {
@@ -657,10 +691,20 @@ const SalesLeadWorkspace = () => {
                                 <div className="flex justify-center gap-6 pb-10">
                                     <button
                                         type="button"
-                                        onClick={() => setIsMicMuted(prev => !prev)}
+                                        onClick={() => {
+                                            if (!isCallActive) return;
+                                            setIsMicMuted((prev) => {
+                                                const next = !prev;
+                                                micMutedRef.current = next;
+                                                if (next) {
+                                                    queueMicrotask(() => stopListening());
+                                                }
+                                                return next;
+                                            });
+                                        }}
                                         disabled={!isCallActive}
                                         className={`w-12 h-12 rounded-full flex items-center justify-center transition-colors ${!isCallActive ? 'opacity-40 cursor-not-allowed' : ''} ${isMicMuted ? 'bg-red-500/80 text-white' : 'bg-white/10 hover:bg-white/20 text-white/70 hover:text-white'}`}
-                                        title={isMicMuted ? 'Unmute microphone' : 'Mute microphone'}
+                                        title={isMicMuted ? 'Unmute microphone — AI will hear you again' : 'Mute microphone — AI will not pick up your voice'}
                                     >
                                         <Mic size={22} />
                                     </button>
@@ -679,10 +723,18 @@ const SalesLeadWorkspace = () => {
                                     </button>
                                     <button
                                         type="button"
-                                        onClick={() => setIsSpeakerMuted(prev => !prev)}
+                                        onClick={() => {
+                                            if (!isCallActive) return;
+                                            setIsSpeakerMuted((prev) => {
+                                                const next = !prev;
+                                                isSpeakerMutedRef.current = next;
+                                                queueMicrotask(() => applySpeakerOutputMuteState(next, speechRef));
+                                                return next;
+                                            });
+                                        }}
                                         disabled={!isCallActive}
                                         className={`w-12 h-12 rounded-full flex items-center justify-center transition-colors ${!isCallActive ? 'opacity-40 cursor-not-allowed' : ''} ${isSpeakerMuted ? 'bg-red-500/80 text-white' : 'bg-white/10 hover:bg-white/20 text-white/70 hover:text-white'}`}
-                                        title={isSpeakerMuted ? 'Enable speaker' : 'Mute speaker'}
+                                        title={isSpeakerMuted ? 'Unmute speaker — hear the AI again' : 'Mute speaker — silence AI audio (call continues)'}
                                     >
                                         <Volume2 size={22} />
                                     </button>
