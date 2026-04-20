@@ -120,6 +120,12 @@ const SalesLeadWorkspace = () => {
     const callActiveRef = useRef(false);
     const micMutedRef = useRef(false);
     const listenRestartTimeoutRef = useRef(null);
+    /** Prevents double /ai/voice/session/start (double-click, Strict Mode, or rapid taps) */
+    const voiceSessionStartLockRef = useRef(false);
+    /** User closed modal during connect — ignore late API response */
+    const voiceCallDismissedRef = useRef(false);
+    /** Stops duplicate onresult bursts from firing multiple /voice/session/turn requests */
+    const lastVoiceDupRef = useRef({ text: '', at: 0 });
     const [isListening, setIsListening] = useState(false);
     const [lastHeardText, setLastHeardText] = useState('');
     const [isProcessingTurn, setIsProcessingTurn] = useState(false);
@@ -136,6 +142,9 @@ const SalesLeadWorkspace = () => {
 
     const openModal = (type) => {
         setWaText(''); setScheduleDate(''); setScheduleTime(''); setNoteText('');
+        if (type === 'call') {
+            voiceCallDismissedRef.current = false;
+        }
         setModal(type);
         if (type !== 'call') {
             setIsCallActive(false);
@@ -191,6 +200,11 @@ const SalesLeadWorkspace = () => {
         const text = String(heardText || '').trim();
         if (!text || !voiceSession?.conversationId || isProcessingTurn) return;
         if (!callActiveRef.current) return;
+        const now = Date.now();
+        if (text === lastVoiceDupRef.current.text && now - lastVoiceDupRef.current.at < 1200) {
+            return;
+        }
+        lastVoiceDupRef.current = { text, at: now };
 
         setIsProcessingTurn(true);
         try {
@@ -293,6 +307,9 @@ const SalesLeadWorkspace = () => {
     };
 
     const startLiveAICall = async () => {
+        if (voiceSessionStartLockRef.current || isCallActive || callActiveRef.current || startingLiveCall) {
+            return;
+        }
         if (!aiReadiness.voiceReady) {
             showToast({
                 title: 'Voice AI is not ready',
@@ -301,6 +318,8 @@ const SalesLeadWorkspace = () => {
             });
             return;
         }
+        voiceSessionStartLockRef.current = true;
+        voiceCallDismissedRef.current = false;
         primeSpeechSynthesisFromUserGesture();
         setStartingLiveCall(true);
         try {
@@ -310,6 +329,9 @@ const SalesLeadWorkspace = () => {
                 name: lead.name,
                 locale: 'hing',
             });
+            if (voiceCallDismissedRef.current) {
+                return;
+            }
             setVoiceSession({
                 brandId: response?.brand_id,
                 leadId: response?.lead_id,
@@ -326,25 +348,30 @@ const SalesLeadWorkspace = () => {
                 { outcome: 'Queued', duration: '0m 00s' }
             );
         } catch (err) {
-            callActiveRef.current = false;
-            addActionToLead(
-                lead.id,
-                'call',
-                'AI Voice Call Failed',
-                err?.message || 'Could not start AI voice call.'
-            );
-            showToast({
-                title: 'Call failed',
-                description: err?.message || 'Could not start AI voice call.',
-                variant: 'error',
-            });
-            setModal(null);
+            if (!voiceCallDismissedRef.current) {
+                callActiveRef.current = false;
+                addActionToLead(
+                    lead.id,
+                    'call',
+                    'AI Voice Call Failed',
+                    err?.message || 'Could not start AI voice call.'
+                );
+                showToast({
+                    title: 'Call failed',
+                    description: err?.message || 'Could not start AI voice call.',
+                    variant: 'error',
+                });
+                setModal(null);
+            }
         } finally {
+            voiceSessionStartLockRef.current = false;
             setStartingLiveCall(false);
         }
     };
 
     const endLiveAICall = () => {
+        voiceSessionStartLockRef.current = false;
+        lastVoiceDupRef.current = { text: '', at: 0 };
         clearPendingListenRestart();
         callActiveRef.current = false;
         setIsProcessingTurn(false);
@@ -489,7 +516,10 @@ const SalesLeadWorkspace = () => {
             <AnimatePresence>
                 <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
                     className="fixed inset-0 z-[80] flex items-center justify-center p-4 bg-gray-900/60 backdrop-blur-sm"
-                    onClick={() => setModal(null)}>
+                    onClick={() => {
+                        if (modal === 'call' && (isCallActive || startingLiveCall)) return;
+                        setModal(null);
+                    }}>
                     <motion.div
                         initial={{ scale: 0.95, y: 16, opacity: 0 }}
                         animate={{ scale: 1, y: 0, opacity: 1 }}
@@ -501,46 +531,76 @@ const SalesLeadWorkspace = () => {
                         {/* CALL */}
                         {modal === 'call' && (
                             <div className="bg-gradient-to-b from-blue-900 to-blue-950 text-white flex flex-col">
-                                <button onClick={() => setModal(null)} className="absolute top-4 right-4 text-white/50 hover:text-white bg-white/10 p-2 rounded-full"><X size={16} /></button>
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        if (startingLiveCall && !isCallActive) {
+                                            voiceCallDismissedRef.current = true;
+                                            voiceSessionStartLockRef.current = false;
+                                            setStartingLiveCall(false);
+                                            setModal(null);
+                                            return;
+                                        }
+                                        if (isCallActive) endLiveAICall();
+                                        else setModal(null);
+                                    }}
+                                    className="absolute top-4 right-4 text-white/50 hover:text-white bg-white/10 p-2 rounded-full"
+                                >
+                                    <X size={16} />
+                                </button>
                                 <div className="p-8 flex flex-col items-center text-center mt-2">
                                     <div className="w-24 h-24 rounded-full bg-white/10 flex items-center justify-center mb-5 relative">
-                                        <div className="absolute inset-0 rounded-full border-4 border-emerald-400/40 animate-ping" />
+                                        <div className={`absolute inset-0 rounded-full border-4 ${startingLiveCall ? 'border-emerald-400/40 animate-ping' : isCallActive ? 'border-emerald-400/30' : 'border-white/20'}`} />
                                         <Phone size={36} className="text-white relative z-10" />
                                     </div>
                                     <h3 className="text-2xl font-bold">{lead.name}</h3>
                                     <p className="text-blue-200 text-sm mt-1 font-medium tracking-widest">{lead.phone}</p>
-                                    <div className="flex items-center gap-2 mt-6 bg-white/10 border border-white/10 px-4 py-2 rounded-full text-emerald-300 text-sm font-semibold">
-                                        <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-                                        Connecting AI Agent...
+                                    <div className="flex items-center gap-2 mt-6 bg-white/10 border border-white/10 px-4 py-2 rounded-full text-emerald-300 text-sm font-semibold max-w-[90%] flex-wrap justify-center">
+                                        <span
+                                            className={`w-2 h-2 rounded-full shrink-0 ${startingLiveCall ? 'bg-amber-400 animate-pulse' : isCallActive ? 'bg-emerald-400' : 'bg-slate-300'}`}
+                                        />
+                                        {startingLiveCall
+                                            ? 'Connecting…'
+                                            : isCallActive
+                                              ? isProcessingTurn
+                                                  ? 'Processing your speech…'
+                                                  : isListening
+                                                    ? 'Listening — speak naturally'
+                                                    : 'Connected — mic ready'
+                                              : 'Ready — tap the green button to start'}
                                     </div>
-                                {isCallActive && (
-                                    <div className="mt-3 text-xs text-blue-100/90">
-                                        {isProcessingTurn
-                                            ? 'Processing your speech...'
-                                            : isListening
-                                                ? 'Listening... speak naturally.'
-                                                : 'Mic idle'}
-                                        {lastHeardText ? ` | Heard: "${lastHeardText}"` : ''}
-                                    </div>
-                                )}
+                                    {isCallActive && lastHeardText ? (
+                                        <div className="mt-3 text-xs text-blue-100/90">Heard: “{lastHeardText}”</div>
+                                    ) : null}
                                 </div>
                                 <div className="flex justify-center gap-6 pb-10">
                                     <button
+                                        type="button"
                                         onClick={() => setIsMicMuted(prev => !prev)}
-                                        className={`w-12 h-12 rounded-full flex items-center justify-center transition-colors ${isMicMuted ? 'bg-red-500/80 text-white' : 'bg-white/10 hover:bg-white/20 text-white/70 hover:text-white'}`}
+                                        disabled={!isCallActive}
+                                        className={`w-12 h-12 rounded-full flex items-center justify-center transition-colors ${!isCallActive ? 'opacity-40 cursor-not-allowed' : ''} ${isMicMuted ? 'bg-red-500/80 text-white' : 'bg-white/10 hover:bg-white/20 text-white/70 hover:text-white'}`}
                                         title={isMicMuted ? 'Unmute microphone' : 'Mute microphone'}
                                     >
                                         <Mic size={22} />
                                     </button>
                                     <button
+                                        type="button"
                                         onClick={isCallActive ? endLiveAICall : startLiveAICall}
                                         disabled={startingLiveCall}
-                                        className="w-16 h-16 bg-red-500 hover:bg-red-600 rounded-full flex items-center justify-center shadow-lg shadow-red-500/30 transition-transform hover:scale-105">
-                                        <Phone size={26} className="rotate-[135deg]" />
+                                        className={`w-16 h-16 rounded-full flex items-center justify-center shadow-lg transition-transform hover:scale-105 disabled:opacity-60 disabled:cursor-not-allowed disabled:hover:scale-100 ${
+                                            isCallActive
+                                                ? 'bg-red-500 hover:bg-red-600 shadow-red-500/30'
+                                                : 'bg-emerald-500 hover:bg-emerald-600 shadow-emerald-500/30'
+                                        }`}
+                                        title={isCallActive ? 'End call' : 'Start AI call'}
+                                    >
+                                        <Phone size={26} className={isCallActive ? 'rotate-[135deg]' : ''} />
                                     </button>
                                     <button
+                                        type="button"
                                         onClick={() => setIsSpeakerMuted(prev => !prev)}
-                                        className={`w-12 h-12 rounded-full flex items-center justify-center transition-colors ${isSpeakerMuted ? 'bg-red-500/80 text-white' : 'bg-white/10 hover:bg-white/20 text-white/70 hover:text-white'}`}
+                                        disabled={!isCallActive}
+                                        className={`w-12 h-12 rounded-full flex items-center justify-center transition-colors ${!isCallActive ? 'opacity-40 cursor-not-allowed' : ''} ${isSpeakerMuted ? 'bg-red-500/80 text-white' : 'bg-white/10 hover:bg-white/20 text-white/70 hover:text-white'}`}
                                         title={isSpeakerMuted ? 'Enable speaker' : 'Mute speaker'}
                                     >
                                         <Volume2 size={22} />
@@ -548,8 +608,9 @@ const SalesLeadWorkspace = () => {
                                 </div>
                                 <div className="pb-6 px-8 flex justify-center">
                                     <button
+                                        type="button"
                                         onClick={endLiveAICall}
-                                        disabled={!isCallActive && !voiceSession}
+                                        disabled={!isCallActive}
                                         className="text-xs font-semibold px-4 py-2 rounded-full border border-white/20 text-white/80 hover:bg-white/10 disabled:opacity-40 disabled:cursor-not-allowed"
                                     >
                                         End Call
