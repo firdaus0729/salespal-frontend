@@ -32,7 +32,7 @@ const SupportTicketDetails = () => {
     useEffect(() => {
         async function fetchTicketDetails() {
             try {
-                const data = await api.get(`/support/tickets/${id}`);
+                const data = await api.get(`/support/${id}`);
                 if (!data?.id) throw new Error('Ticket not found');
                 setTicket(data);
                 setMessages(Array.isArray(data?.comments) ? data.comments : []);
@@ -58,7 +58,7 @@ const SupportTicketDetails = () => {
         try {
             setUpdatingStatus(true);
             setStatus(toTitle(normalized));
-            await api.put(`/support/tickets/${id}`, { status: normalized });
+            await api.put(`/support/${id}`, { status: normalized });
             setToastMessage("Status updated successfully");
         } catch (error) {
             console.error("Failed to update status", error);
@@ -72,7 +72,7 @@ const SupportTicketDetails = () => {
     const handleEscalate = async () => {
         try {
             setUpdatingStatus(true);
-            await api.put(`/support/tickets/${id}`, { status: 'in_progress', priority: 'urgent' });
+            await api.put(`/support/${id}`, { status: 'in_progress', priority: 'urgent' });
             setStatus('In Progress');
             setToastMessage('Ticket escalated');
         } catch (error) {
@@ -88,7 +88,7 @@ const SupportTicketDetails = () => {
         if (!content) return;
         try {
             setSending(true);
-            const created = await api.post(`/support/tickets/${id}/comments`, { content });
+            const created = await api.post(`/support/${id}/comments`, { content });
             setMessages((prev) => [...prev, created]);
             setReplyText('');
             setToastMessage('Reply sent');

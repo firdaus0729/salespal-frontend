@@ -56,7 +56,7 @@ const SupportTickets = () => {
     useEffect(() => {
         async function fetchTickets() {
             try {
-                const data = await api.get('/support/tickets');
+                const data = await api.get('/support');
                 const normalized = Array.isArray(data) ? data.map(normalizeTicket) : [];
                 setTickets(normalized);
                 setError('');
@@ -110,7 +110,7 @@ const SupportTickets = () => {
         if (!form.subject.trim()) return;
         setCreating(true);
         try {
-            const created = await api.post('/support/tickets', {
+            const created = await api.post('/support', {
                 subject: form.subject.trim(),
                 description: form.description.trim() || null,
                 priority: form.priority,

@@ -34,7 +34,7 @@ const SupportDashboard = () => {
                     return;
                 }
 
-                const ticketsRaw = await api.get('/support/tickets');
+                const ticketsRaw = await api.get('/support');
                 const normalized = normalizeTickets(ticketsRaw);
                 const openTickets = normalized.filter(t => ["Open", "In Progress"].includes(t.status)).length;
                 const resolvedTickets = normalized.filter(t => t.status === "Resolved" || t.status === "Closed").length;

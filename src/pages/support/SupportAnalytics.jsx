@@ -17,6 +17,7 @@ import {
 import api from '../../lib/api';
 
 const COLORS = ['#8884d8', '#82ca9d', '#ffc658', '#ff8042', '#a4de6c'];
+const toTitle = (value = '') => String(value).replace(/_/g, ' ').replace(/\b\w/g, (m) => m.toUpperCase());
 
 const SupportAnalytics = () => {
     const [analyticsData, setAnalyticsData] = useState(null);
@@ -25,8 +26,47 @@ const SupportAnalytics = () => {
     useEffect(() => {
         async function fetchAnalytics() {
             try {
-                const data = await api.get('/support/analytics');
-                setAnalyticsData(data);
+                const data = await api.get('/support/analytics').catch(() => null);
+                if (data) {
+                    setAnalyticsData(data);
+                    return;
+                }
+
+                const tickets = await api.get('/support');
+                const rows = Array.isArray(tickets) ? tickets : [];
+                const normalized = rows.map((t) => ({
+                    ...t,
+                    statusLabel: toTitle(t.status || 'open'),
+                    categoryLabel: toTitle(t.category || 'uncategorized'),
+                }));
+
+                const total = normalized.length;
+                const resolvedCount = normalized.filter((t) => t.status === 'resolved' || t.status === 'closed').length;
+                const escalatedCount = normalized.filter((t) => t.priority === 'high' || t.priority === 'urgent').length;
+
+                const categoryMap = normalized.reduce((acc, t) => {
+                    const k = t.categoryLabel;
+                    acc[k] = (acc[k] || 0) + 1;
+                    return acc;
+                }, {});
+
+                const statusMap = normalized.reduce((acc, t) => {
+                    const k = t.statusLabel;
+                    acc[k] = (acc[k] || 0) + 1;
+                    return acc;
+                }, {});
+
+                setAnalyticsData({
+                    metrics: [
+                        { title: 'Total Tickets', value: String(total) },
+                        { title: 'Resolution Rate', value: total ? `${Math.round((resolvedCount / total) * 100)}%` : '0%' },
+                        { title: 'Escalation Rate', value: total ? `${Math.round((escalatedCount / total) * 100)}%` : '0%' },
+                        { title: 'Avg Response Time', value: '—' },
+                    ],
+                    ticketTrend: [],
+                    categoryData: Object.entries(categoryMap).map(([name, value]) => ({ name, value })),
+                    statusData: Object.entries(statusMap).map(([name, value]) => ({ name, value })),
+                });
             } catch (err) {
                 console.error("Failed to fetch support analytics data:", err);
                 setAnalyticsData(null);
