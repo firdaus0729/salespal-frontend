@@ -10,6 +10,8 @@ const AutomationForm = ({ customerContext, onSave }) => {
     const [channel, setChannel] = useState(CHANNELS[0]);
     const [trigger, setTrigger] = useState(TRIGGERS[0]);
     const [action, setAction] = useState(ACTIONS[0]);
+    const [customDate, setCustomDate] = useState('');
+    const [customTime, setCustomTime] = useState('');
 
     const [showSuccess, setShowSuccess] = useState(false);
 
@@ -20,6 +22,7 @@ const AutomationForm = ({ customerContext, onSave }) => {
             channel,
             trigger,
             action,
+            customSchedule: trigger === 'Custom' ? { date: customDate, time: customTime || null } : null,
             status: 'Active',
             createdAt: new Date().toISOString()
         };
@@ -76,6 +79,22 @@ const AutomationForm = ({ customerContext, onSave }) => {
                         >
                             {TRIGGERS.map(t => <option key={t} value={t}>{t}</option>)}
                         </select>
+                        {trigger === 'Custom' && (
+                            <div className="mt-2 grid grid-cols-2 gap-2">
+                                <input
+                                    type="date"
+                                    value={customDate}
+                                    onChange={(e) => setCustomDate(e.target.value)}
+                                    className="w-full px-3 py-2 text-sm bg-white border border-gray-200 rounded-lg"
+                                />
+                                <input
+                                    type="time"
+                                    value={customTime}
+                                    onChange={(e) => setCustomTime(e.target.value)}
+                                    className="w-full px-3 py-2 text-sm bg-white border border-gray-200 rounded-lg"
+                                />
+                            </div>
+                        )}
                     </div>
 
                     {/* Action */}
@@ -100,6 +119,7 @@ const AutomationForm = ({ customerContext, onSave }) => {
                 )}
                 <button
                     onClick={handleSave}
+                    disabled={trigger === 'Custom' && !customDate}
                     className="px-6 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white shadow-sm shadow-indigo-200 rounded-xl text-sm font-semibold flex items-center gap-2 transition-colors relative overflow-hidden"
                 >
                     <Save className="w-4 h-4" /> Save Automation

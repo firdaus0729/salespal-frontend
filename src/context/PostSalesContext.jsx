@@ -14,6 +14,10 @@ export const PostSalesProvider = ({ children }) => {
     const [documents, setDocuments] = useState([]);
     const [onboardingFlows, setOnboardingFlows] = useState([]);
     const [loading, setLoading] = useState(true);
+    const [deployedNumbers, setDeployedNumbers] = useState({
+        calling: ['+91 98765 43210', '+91 91234 56789', '+1 415 555 0134'],
+        whatsapp: ['+91 98765 43210', '+91 91234 56789', '+1 415 555 0134'],
+    });
     
     // Helper to normalize backend data to frontend camelCase
     const formatCustomer = (c) => {
@@ -44,6 +48,8 @@ export const PostSalesProvider = ({ children }) => {
             issueRemaining: metadata.issueRemaining || false,
             issueResolved: metadata.issueResolved || false,
             ratingScore: typeof metadata.ratingScore === 'number' ? metadata.ratingScore : null,
+            callingBotNumber: metadata.callingBotNumber || '',
+            whatsappBotNumber: metadata.whatsappBotNumber || '',
         };
     };
 
@@ -77,13 +83,14 @@ export const PostSalesProvider = ({ children }) => {
         if (!user) { setLoading(false); return; }
         setLoading(true);
         try {
-            const [c, p, a, f, d, o] = await Promise.all([
+            const [c, p, a, f, d, o, dn] = await Promise.all([
                 api.get('/post-sales/customers'),
                 api.get('/post-sales/payments'),
                 api.get('/post-sales/automations'),
                 api.get('/post-sales/followups'),
                 api.get('/post-sales/documents'),
                 api.get('/post-sales/onboarding'),
+                api.get('/integrations/deployed-numbers').catch(() => null),
             ]);
             setCustomers((c || []).map(formatCustomer));
             setPayments((p || []).map(formatPayment));
@@ -91,6 +98,12 @@ export const PostSalesProvider = ({ children }) => {
             setFollowUps(f || []);
             setDocuments((d || []).map(formatDocument));
             setOnboardingFlows(o || []);
+            if (dn?.calling || dn?.whatsapp) {
+                setDeployedNumbers({
+                    calling: Array.isArray(dn.calling) && dn.calling.length ? dn.calling : ['+91 98765 43210', '+91 91234 56789', '+1 415 555 0134'],
+                    whatsapp: Array.isArray(dn.whatsapp) && dn.whatsapp.length ? dn.whatsapp : ['+91 98765 43210', '+91 91234 56789', '+1 415 555 0134'],
+                });
+            }
         } catch (err) {
             console.error('PostSales fetch error:', err);
         } finally {
@@ -115,6 +128,8 @@ export const PostSalesProvider = ({ children }) => {
                 issueRemaining: !!(customer.issueRemaining || customer.metadata?.issueRemaining),
                 issueResolved: !!(customer.issueResolved || customer.metadata?.issueResolved),
                 ratingScore: typeof customer.ratingScore === 'number' ? customer.ratingScore : customer.metadata?.ratingScore ?? null,
+                callingBotNumber: customer.callingBotNumber || customer.metadata?.callingBotNumber || '',
+                whatsappBotNumber: customer.whatsappBotNumber || customer.metadata?.whatsappBotNumber || '',
             };
             const created = await api.post('/post-sales/customers', {
                 name: customer.name,
@@ -153,6 +168,8 @@ export const PostSalesProvider = ({ children }) => {
                     ...(updates.issueRemaining !== undefined ? { issueRemaining: updates.issueRemaining } : {}),
                     ...(updates.issueResolved !== undefined ? { issueResolved: updates.issueResolved } : {}),
                     ...(updates.ratingScore !== undefined ? { ratingScore: updates.ratingScore } : {}),
+                    ...(updates.callingBotNumber !== undefined ? { callingBotNumber: updates.callingBotNumber } : {}),
+                    ...(updates.whatsappBotNumber !== undefined ? { whatsappBotNumber: updates.whatsappBotNumber } : {}),
                 };
             const updated = await api.put(`/post-sales/customers/${id}`, { ...updates, metadata: mergedMetadata });
             const formatted = formatCustomer(updated);
@@ -359,6 +376,7 @@ export const PostSalesProvider = ({ children }) => {
             onboardingFlows, upsertOnboardingStep, getCustomerOnboarding,
             // refresh
             refetch: fetchAll,
+            deployedNumbers,
         }}>
             {children}
         </PostSalesContext.Provider>

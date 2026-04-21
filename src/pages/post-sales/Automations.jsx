@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { motion } from 'framer-motion';
 import { Zap, MessageCircle, Mail, PhoneCall, Smartphone, ArrowLeft, Check, Plus } from 'lucide-react';
 import { usePostSales } from '../../context/PostSalesContext';
@@ -25,14 +25,25 @@ const TIMING_OPTIONS = [
 const Automations = () => {
     const location = useLocation();
     const navigate = useNavigate();
-    const { addAutomation, getCustomerAutomations, toggleAutomation } = usePostSales();
+    const { addAutomation, getCustomerAutomations, toggleAutomation, deployedNumbers } = usePostSales();
 
     // Selected customer data from Router state
     const customerData = location.state || null;
 
     const [channel, setChannel] = useState('whatsapp');
     const [timing, setTiming] = useState('1_day_before');
+    const [customDate, setCustomDate] = useState('');
+    const [customTime, setCustomTime] = useState('');
+    const [customNote, setCustomNote] = useState('');
+    const [botNumber, setBotNumber] = useState('');
     const [saved, setSaved] = useState(false);
+
+    useEffect(() => {
+        if (!(channel === 'ai_call' || channel === 'whatsapp')) return;
+        if (botNumber) return;
+        const pool = channel === 'ai_call' ? deployedNumbers.calling : deployedNumbers.whatsapp;
+        if (Array.isArray(pool) && pool.length) setBotNumber(pool[0]);
+    }, [channel, botNumber, deployedNumbers.calling, deployedNumbers.whatsapp]);
 
     // If we came directly (no state), show empty/selection state or generic library
     // In the real app, we'd probably have a customer selector here if state is null.
@@ -53,12 +64,23 @@ const Automations = () => {
 
     const handleSave = () => {
         if (!customerData) return;
+        if (timing === 'custom' && !customDate) return;
 
         addAutomation({
             customerId: customerData.customerId,
             trigger: 'manual_setup',
             action: `send_${channel}`,
-            condition: timing
+            condition: timing,
+            metadata: timing === 'custom'
+                ? {
+                    customDate,
+                    customTime: customTime || null,
+                    customNote: customNote.trim() || null,
+                    botNumber: (channel === 'ai_call' || channel === 'whatsapp') ? (botNumber || null) : null,
+                }
+                : {
+                    botNumber: (channel === 'ai_call' || channel === 'whatsapp') ? (botNumber || null) : null,
+                }
         });
 
         setSaved(true);
@@ -136,6 +158,21 @@ const Automations = () => {
                                     </label>
                                 ))}
                             </div>
+                            {(channel === 'ai_call' || channel === 'whatsapp') && (
+                                <div className="mt-3">
+                                    <label className="text-xs font-semibold text-gray-600">Deployed Number</label>
+                                    <select
+                                        value={botNumber}
+                                        onChange={(e) => setBotNumber(e.target.value)}
+                                        className="mt-1 w-full text-sm border border-gray-200 rounded-lg px-2.5 py-2 bg-white"
+                                    >
+                                        <option value="">{channel === 'ai_call' ? 'Select calling bot number' : 'Select WhatsApp bot number'}</option>
+                                        {((channel === 'ai_call' ? deployedNumbers.calling : deployedNumbers.whatsapp) || []).map((n) => (
+                                            <option key={`bot-${n}`} value={n}>{n}</option>
+                                        ))}
+                                    </select>
+                                </div>
+                            )}
                         </div>
 
                         {/* Timing */}
@@ -153,6 +190,38 @@ const Automations = () => {
                                     </label>
                                 ))}
                             </div>
+                            {timing === 'custom' && (
+                                <div className="mt-3 grid grid-cols-1 sm:grid-cols-3 gap-3 rounded-xl border border-indigo-100 bg-indigo-50/40 p-3">
+                                    <div>
+                                        <label className="text-xs font-semibold text-gray-600">Date</label>
+                                        <input
+                                            type="date"
+                                            value={customDate}
+                                            onChange={(e) => setCustomDate(e.target.value)}
+                                            className="mt-1 w-full text-sm border border-gray-200 rounded-lg px-2.5 py-2 bg-white"
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="text-xs font-semibold text-gray-600">Time</label>
+                                        <input
+                                            type="time"
+                                            value={customTime}
+                                            onChange={(e) => setCustomTime(e.target.value)}
+                                            className="mt-1 w-full text-sm border border-gray-200 rounded-lg px-2.5 py-2 bg-white"
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="text-xs font-semibold text-gray-600">Note (optional)</label>
+                                        <input
+                                            type="text"
+                                            value={customNote}
+                                            onChange={(e) => setCustomNote(e.target.value)}
+                                            placeholder="e.g. client requested evening"
+                                            className="mt-1 w-full text-sm border border-gray-200 rounded-lg px-2.5 py-2 bg-white"
+                                        />
+                                    </div>
+                                </div>
+                            )}
                         </div>
 
                         {/* Save */}
@@ -161,7 +230,11 @@ const Automations = () => {
                                 <p className="text-[10px] font-bold text-gray-500 uppercase tracking-wide mb-1">Auto Language Preview</p>
                                 <p className="text-xs text-gray-700">{previewMessage}</p>
                             </div>
-                            <button onClick={handleSave} className="w-full flex items-center justify-center gap-2 py-3 bg-indigo-600 text-white rounded-xl font-bold shadow-sm shadow-indigo-200 hover:bg-indigo-700 transition-colors">
+                            <button
+                                onClick={handleSave}
+                                disabled={(timing === 'custom' && !customDate) || ((channel === 'ai_call' || channel === 'whatsapp') && !botNumber)}
+                                className="w-full flex items-center justify-center gap-2 py-3 bg-indigo-600 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-xl font-bold shadow-sm shadow-indigo-200 hover:bg-indigo-700 transition-colors"
+                            >
                                 {saved ? <><Check className="w-5 h-5" /> Saved Successfully</> : <><Plus className="w-5 h-5" /> Add Automation Rule</>}
                             </button>
                         </div>
@@ -183,6 +256,14 @@ const Automations = () => {
                                     <div>
                                         <p className="text-sm font-bold text-gray-800 capitalize">{rule.action.replace('send_', '')} Reminder</p>
                                         <p className="text-xs text-gray-500 mt-1 capitalize">{rule.condition.replace(/_/g, ' ')}</p>
+                                        {rule.condition === 'custom' && rule.metadata?.customDate && (
+                                            <p className="text-[11px] text-indigo-600 mt-1">
+                                                {rule.metadata.customDate}{rule.metadata.customTime ? ` ${rule.metadata.customTime}` : ''}
+                                            </p>
+                                        )}
+                                        {rule.metadata?.botNumber && (
+                                            <p className="text-[11px] text-emerald-600 mt-1">Number: {rule.metadata.botNumber}</p>
+                                        )}
                                     </div>
                                     {/* Toggle */}
                                     <button onClick={() => toggleAutomation(rule.id)}

@@ -27,7 +27,7 @@ function postSalesFlowRecommendation(data) {
 }
 
 const ExtractedDetailsView = ({ customerData, onCancel }) => {
-    const { addCustomer } = usePostSales();
+    const { addCustomer, deployedNumbers } = usePostSales();
     const navigate = useNavigate();
     const timezoneOptions = getAllTimeZones();
     const languageOptions = getLanguageSelectOptions();
@@ -50,6 +50,8 @@ const ExtractedDetailsView = ({ customerData, onCancel }) => {
         issueRemaining: !!customerData.issueRemaining,
         issueResolved: !!customerData.issueResolved,
         ratingScore: typeof customerData.ratingScore === 'number' ? customerData.ratingScore : '',
+        callingBotNumber: customerData.callingBotNumber || deployedNumbers.calling?.[0] || '',
+        whatsappBotNumber: customerData.whatsappBotNumber || deployedNumbers.whatsapp?.[0] || '',
     });
 
     const remainingDue = Math.max(0, editableData.totalDue - editableData.paid);
@@ -73,6 +75,8 @@ const ExtractedDetailsView = ({ customerData, onCancel }) => {
             issueRemaining: editableData.issueRemaining,
             issueResolved: editableData.issueResolved,
             ratingScore: editableData.ratingScore === '' ? null : Number(editableData.ratingScore),
+            callingBotNumber: editableData.callingBotNumber,
+            whatsappBotNumber: editableData.whatsappBotNumber,
         });
         navigate('/post-sales');
     };
@@ -263,6 +267,22 @@ const ExtractedDetailsView = ({ customerData, onCancel }) => {
                                     placeholder="Rating 1-10"
                                     className="text-sm border border-gray-200 rounded-lg px-3 py-2 bg-white"
                                 />
+                                <select
+                                    disabled={!isEditing}
+                                    value={editableData.callingBotNumber}
+                                    onChange={(e) => setEditableData({ ...editableData, callingBotNumber: e.target.value })}
+                                    className="text-sm border border-gray-200 rounded-lg px-3 py-2 bg-white"
+                                >
+                                    {(deployedNumbers.calling || []).map((n) => <option key={`call-${n}`} value={n}>Calling Bot: {n}</option>)}
+                                </select>
+                                <select
+                                    disabled={!isEditing}
+                                    value={editableData.whatsappBotNumber}
+                                    onChange={(e) => setEditableData({ ...editableData, whatsappBotNumber: e.target.value })}
+                                    className="text-sm border border-gray-200 rounded-lg px-3 py-2 bg-white"
+                                >
+                                    {(deployedNumbers.whatsapp || []).map((n) => <option key={`wa-${n}`} value={n}>WhatsApp Bot: {n}</option>)}
+                                </select>
                             </div>
 
                             <div className="bg-white border border-indigo-100 rounded-lg p-3">
