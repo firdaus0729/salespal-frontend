@@ -199,7 +199,6 @@ const SalesLeadWorkspace = () => {
         scheduleAutomationHandshake,
         getLeadAutomationJobs,
         updateAutomationJobStatus,
-        cleanupLeadAutomationJobs,
     } = useSales();
     const { showToast } = useToast();
 
@@ -592,11 +591,6 @@ const SalesLeadWorkspace = () => {
                 // non-blocking
             }
             activeIncomingCallJobIdRef.current = null;
-        }
-        try {
-            await cleanupLeadAutomationJobs(lead.id, 'call');
-        } catch (_) {
-            // non-blocking
         }
         clearIncomingCallTimeout();
         setIncomingCallSecondsLeft(0);
