@@ -300,6 +300,7 @@ const SalesLeadWorkspace = () => {
     const [automationJobs, setAutomationJobs] = useState([]);
     const [creatingAutomation, setCreatingAutomation] = useState(false);
     const [cancellingAutomationId, setCancellingAutomationId] = useState(null);
+    const [confirmingChatJobId, setConfirmingChatJobId] = useState(null);
     const [incomingCallJob, setIncomingCallJob] = useState(null);
     const [incomingCallSecondsLeft, setIncomingCallSecondsLeft] = useState(0);
     const [startingLiveCall, setStartingLiveCall] = useState(false);
@@ -352,6 +353,7 @@ const SalesLeadWorkspace = () => {
     const incomingCallTimeoutRef = useRef(null);
     const activeIncomingCallJobIdRef = useRef(null);
     const seenDispatchedCallJobsRef = useRef(new Set());
+    const seenDispatchedChatJobsRef = useRef(new Set());
     /** Parsed from GET /integrations/readiness (calling.* only; ignores Google Ads blockers). */
     const [aiReadiness, setAiReadiness] = useState({
         loading: true,
@@ -1167,6 +1169,12 @@ const SalesLeadWorkspace = () => {
                         j.target_channel === 'call' &&
                         !seenDispatchedCallJobsRef.current.has(j.id)
                 );
+                const dueChat = list.find(
+                    (j) =>
+                        j.status === 'dispatched' &&
+                        j.target_channel === 'whatsapp' &&
+                        !seenDispatchedChatJobsRef.current.has(j.id)
+                );
                 if (dueCall && !isCallActive && !startingLiveCall) {
                     seenDispatchedCallJobsRef.current.add(dueCall.id);
                     setIncomingCallJob(dueCall);
@@ -1175,6 +1183,15 @@ const SalesLeadWorkspace = () => {
                     showToast({
                         title: 'Incoming scheduled bot call',
                         description: 'Call time reached. Tap the green button to let the bot start speaking.',
+                        variant: 'info',
+                    });
+                }
+                if (dueChat) {
+                    seenDispatchedChatJobsRef.current.add(dueChat.id);
+                    await refreshLeadActivities(lead.id);
+                    showToast({
+                        title: 'Scheduled bot chat delivered',
+                        description: 'Bot chat has been sent. Open WhatsApp and confirm to close reservation.',
                         variant: 'info',
                     });
                 }
@@ -1191,7 +1208,7 @@ const SalesLeadWorkspace = () => {
             stopIncomingRing();
             clearIncomingCallTimeout();
         };
-    }, [lead?.id, getLeadAutomationJobs, isCallActive, startingLiveCall]);
+    }, [lead?.id, getLeadAutomationJobs, isCallActive, startingLiveCall, refreshLeadActivities]);
 
     if (!lead) {
         return (
@@ -1216,6 +1233,9 @@ const SalesLeadWorkspace = () => {
     const scoreColor = (s) => s >= 80 ? 'text-red-600' : s >= 50 ? 'text-orange-500' : 'text-sky-500';
     const scoreBar = (s) => s >= 80 ? 'bg-red-500' : s >= 50 ? 'bg-orange-400' : 'bg-sky-400';
     const pendingAutomationJobs = automationJobs.filter((j) => j.status === 'pending');
+    const dispatchedChatJobs = automationJobs
+        .filter((j) => j.status === 'dispatched' && j.target_channel === 'whatsapp')
+        .sort((a, b) => new Date(b.schedule_at).getTime() - new Date(a.schedule_at).getTime());
 
     const scheduleHandshake = async ({ sourceChannel, targetChannel, when, messageTemplate }) => {
         if (!lead?.id) return;
@@ -1277,6 +1297,29 @@ const SalesLeadWorkspace = () => {
             });
         } finally {
             setCancellingAutomationId(null);
+        }
+    };
+
+    const confirmBotScheduledChat = async (job) => {
+        if (!job?.id || !lead?.id) return;
+        try {
+            setConfirmingChatJobId(job.id);
+            await updateAutomationJobStatus(job.id, 'cancelled');
+            setAutomationJobs((prev) => prev.map((row) => (row.id === job.id ? { ...row, status: 'cancelled' } : row)));
+            await refreshLeadActivities(lead.id);
+            showToast({
+                title: 'Chat reservation closed',
+                description: 'Scheduled bot chat is confirmed and closed.',
+                variant: 'success',
+            });
+        } catch (err) {
+            showToast({
+                title: 'Could not confirm chat',
+                description: err?.message || 'Please try again.',
+                variant: 'warning',
+            });
+        } finally {
+            setConfirmingChatJobId(null);
         }
     };
 
@@ -1467,6 +1510,23 @@ const SalesLeadWorkspace = () => {
                                     </div>
                                 </div>
                                 <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden bg-[#ECE5DD] p-4 flex flex-col gap-2">
+                                    {dispatchedChatJobs.length > 0 && (
+                                        <div className="self-stretch rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 mb-1">
+                                            <div className="flex items-start justify-between gap-2">
+                                                <p className="text-[11px] text-emerald-800 font-medium">
+                                                    Scheduled bot chat delivered at {new Date(dispatchedChatJobs[0].schedule_at).toLocaleString()}.
+                                                </p>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => confirmBotScheduledChat(dispatchedChatJobs[0])}
+                                                    disabled={confirmingChatJobId === dispatchedChatJobs[0].id}
+                                                    className="shrink-0 px-2 py-1 rounded bg-emerald-600 text-white text-[10px] font-semibold hover:bg-emerald-700 disabled:opacity-60"
+                                                >
+                                                    {confirmingChatJobId === dispatchedChatJobs[0].id ? 'Closing…' : 'Confirm'}
+                                                </button>
+                                            </div>
+                                        </div>
+                                    )}
                                     {waHistory.length > 0 ? waHistory.map(msg => (
                                         <div key={msg.id} className={`max-w-[80%] ${msg.sender === 'AI' ? 'self-start bg-white rounded-tl-none' : 'self-end bg-[#DCF8C6] rounded-tr-none'} p-2.5 rounded-xl shadow-sm text-sm text-gray-800`}>
                                             {msg.attachment && <p className="text-xs font-semibold text-blue-600 mb-1">📎 {msg.attachment}</p>}
