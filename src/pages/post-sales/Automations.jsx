@@ -3,6 +3,7 @@ import { motion } from 'framer-motion';
 import { Zap, MessageCircle, Mail, PhoneCall, Smartphone, ArrowLeft, Check, Plus } from 'lucide-react';
 import { usePostSales } from '../../context/PostSalesContext';
 import { useLocation, useNavigate } from 'react-router-dom';
+import { getPostSalesTemplate } from '../../utils/postSalesLanguageTemplates';
 
 const formatCurrency = (a) => new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 }).format(a);
 const formatDate = (d) => d ? new Date(d).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' }) : '—';
@@ -38,6 +39,17 @@ const Automations = () => {
     // For the assignment, we focus on the specific customer view as requested.
 
     const activeAutomations = customerData ? getCustomerAutomations(customerData.customerId) : [];
+    const previewMessage = customerData
+        ? getPostSalesTemplate(
+            timing === 'on_due_date' ? 'pending_payment' : channel === 'email' ? 'pending_document' : 'pending_payment',
+            {
+                name: customerData.customerName,
+                amount: formatCurrency(customerData.remainingAmount),
+                preferredLocale: customerData.preferredLocale || 'hing',
+                autoLanguageSwitch: customerData.autoLanguageSwitch !== false,
+            }
+        )
+        : '';
 
     const handleSave = () => {
         if (!customerData) return;
@@ -145,6 +157,10 @@ const Automations = () => {
 
                         {/* Save */}
                         <div className="pt-2">
+                            <div className="mb-3 bg-gray-50 border border-gray-200 rounded-lg p-3">
+                                <p className="text-[10px] font-bold text-gray-500 uppercase tracking-wide mb-1">Auto Language Preview</p>
+                                <p className="text-xs text-gray-700">{previewMessage}</p>
+                            </div>
                             <button onClick={handleSave} className="w-full flex items-center justify-center gap-2 py-3 bg-indigo-600 text-white rounded-xl font-bold shadow-sm shadow-indigo-200 hover:bg-indigo-700 transition-colors">
                                 {saved ? <><Check className="w-5 h-5" /> Saved Successfully</> : <><Plus className="w-5 h-5" /> Add Automation Rule</>}
                             </button>

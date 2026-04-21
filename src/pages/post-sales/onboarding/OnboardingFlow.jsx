@@ -10,10 +10,21 @@ import StepActivation from './StepActivation';
 import OnboardingProgress from '../components/OnboardingProgress';
 
 const STEPS = [StepWelcome, StepDocumentCollection, StepAgreement, StepPaymentSetup, StepActivation];
+const STEP_KEYS = ['welcome', 'document_collection', 'agreement', 'payment_setup', 'activation'];
 
 const OnboardingFlow = ({ customer, onClose }) => {
-    const { onboardingFlows, updateOnboarding } = usePostSales();
-    const flow = onboardingFlows[customer.id] || { stepIndex: 0, completedSteps: [] };
+    const { getCustomerOnboarding, upsertOnboardingStep } = usePostSales();
+    const customerSteps = getCustomerOnboarding(customer.id);
+    const completedFromServer = customerSteps
+        .filter((s) => s.status === 'completed')
+        .map((s) => Math.max(0, STEP_KEYS.indexOf(s.step_name)));
+    const lastInProgress = customerSteps
+        .filter((s) => s.status === 'in_progress')
+        .sort((a, b) => (b.step_order || 0) - (a.step_order || 0))[0];
+    const flow = {
+        stepIndex: lastInProgress ? Math.max(0, (lastInProgress.step_order || 1) - 1) : completedFromServer.length,
+        completedSteps: completedFromServer.filter((idx) => idx >= 0),
+    };
     const [stepIndex, setStepIndex] = useState(flow.stepIndex);
     const [completedSteps, setCompletedSteps] = useState(flow.completedSteps);
     const [direction, setDirection] = useState(1);
@@ -31,9 +42,10 @@ const OnboardingFlow = ({ customer, onClose }) => {
                 const nextIdx = stepIndex + 1;
                 setDirection(1);
                 setStepIndex(nextIdx);
-                updateOnboarding(customer.id, nextIdx, newCompleted);
+                upsertOnboardingStep(customer.id, STEP_KEYS[stepIndex], stepIndex + 1, 'completed', 'Completed in onboarding flow');
+                upsertOnboardingStep(customer.id, STEP_KEYS[nextIdx], nextIdx + 1, 'in_progress', 'Current onboarding step');
             } else {
-                updateOnboarding(customer.id, stepIndex, newCompleted);
+                upsertOnboardingStep(customer.id, STEP_KEYS[stepIndex], stepIndex + 1, 'completed', 'Completed in onboarding flow');
             }
         } else if (!isLast) {
             setDirection(1);

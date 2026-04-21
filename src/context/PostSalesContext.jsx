@@ -24,6 +24,7 @@ export const PostSalesProvider = ({ children }) => {
         const rawDate = c.due_date || c.dueDate;
         const normalizedDate = rawDate ? new Date(rawDate).toISOString().split('T')[0] : '';
         
+        const metadata = c.metadata && typeof c.metadata === 'object' ? c.metadata : {};
         return {
             ...c,
             totalDue,
@@ -32,6 +33,17 @@ export const PostSalesProvider = ({ children }) => {
             dueDate: normalizedDate,
             lastContact: c.last_contact || c.lastContact,
             company: c.company || '',
+            metadata,
+            timezone: metadata.timezone || null,
+            preferredLocale: metadata.preferredLocale || 'hing',
+            autoLanguageSwitch: metadata.autoLanguageSwitch !== false,
+            paymentStatus: metadata.paymentStatus || 'pending',
+            documentStatus: metadata.documentStatus || 'pending',
+            ownerConfirmed: metadata.ownerConfirmed || false,
+            allRequirementsDone: metadata.allRequirementsDone || false,
+            issueRemaining: metadata.issueRemaining || false,
+            issueResolved: metadata.issueResolved || false,
+            ratingScore: typeof metadata.ratingScore === 'number' ? metadata.ratingScore : null,
         };
     };
 
@@ -44,6 +56,19 @@ export const PostSalesProvider = ({ children }) => {
             amount: Number(p.amount || 0),
             paymentDate: (p.paid_at || p.paymentDate || p.created_at || '').split('T')[0],
             status: p.status || 'pending',
+            dueDate: (p.due_date || p.dueDate || '').split('T')[0],
+            invoiceId: p.invoice_id || p.invoiceId || `INV-${String(p.id || '').slice(0, 8).toUpperCase()}`,
+        };
+    };
+
+    const formatDocument = (d) => {
+        if (!d) return null;
+        const status = d.status === 'approved' ? 'verified' : d.status;
+        return {
+            ...d,
+            customerId: d.customer_id || d.customerId,
+            uploadedAt: d.created_at || d.uploadedAt || null,
+            status: status || 'pending',
         };
     };
 
@@ -64,7 +89,7 @@ export const PostSalesProvider = ({ children }) => {
             setPayments((p || []).map(formatPayment));
             setAutomations(a || []);
             setFollowUps(f || []);
-            setDocuments(d || []);
+            setDocuments((d || []).map(formatDocument));
             setOnboardingFlows(o || []);
         } catch (err) {
             console.error('PostSales fetch error:', err);
@@ -78,6 +103,19 @@ export const PostSalesProvider = ({ children }) => {
     // ─── CUSTOMERS ───────────────────────────────────────────────────────────
     const addCustomer = async (customer) => {
         try {
+            const mergedMetadata = {
+                ...(customer.metadata || {}),
+                timezone: customer.timezone || customer.metadata?.timezone || null,
+                preferredLocale: customer.preferredLocale || customer.metadata?.preferredLocale || 'hing',
+                autoLanguageSwitch: customer.autoLanguageSwitch !== false,
+                paymentStatus: customer.paymentStatus || customer.metadata?.paymentStatus || 'pending',
+                documentStatus: customer.documentStatus || customer.metadata?.documentStatus || 'pending',
+                ownerConfirmed: !!(customer.ownerConfirmed || customer.metadata?.ownerConfirmed),
+                allRequirementsDone: !!(customer.allRequirementsDone || customer.metadata?.allRequirementsDone),
+                issueRemaining: !!(customer.issueRemaining || customer.metadata?.issueRemaining),
+                issueResolved: !!(customer.issueResolved || customer.metadata?.issueResolved),
+                ratingScore: typeof customer.ratingScore === 'number' ? customer.ratingScore : customer.metadata?.ratingScore ?? null,
+            };
             const created = await api.post('/post-sales/customers', {
                 name: customer.name,
                 phone: customer.phone || null,
@@ -87,6 +125,7 @@ export const PostSalesProvider = ({ children }) => {
                 amountPaid: customer.amountPaid || customer.amount_paid || 0,
                 dueDate: customer.dueDate || customer.due_date || null,
                 status: customer.status || 'active',
+                metadata: mergedMetadata,
             });
             const formatted = formatCustomer(created);
             setCustomers(prev => [formatted, ...prev]);
@@ -99,7 +138,23 @@ export const PostSalesProvider = ({ children }) => {
 
     const updateCustomer = async (id, updates) => {
         try {
-            const updated = await api.put(`/post-sales/customers/${id}`, updates);
+            const current = customers.find(c => c.id === id);
+            const mergedMetadata = updates?.metadata !== undefined
+                ? updates.metadata
+                : {
+                    ...(current?.metadata || {}),
+                    ...(updates.timezone !== undefined ? { timezone: updates.timezone } : {}),
+                    ...(updates.preferredLocale !== undefined ? { preferredLocale: updates.preferredLocale } : {}),
+                    ...(updates.autoLanguageSwitch !== undefined ? { autoLanguageSwitch: updates.autoLanguageSwitch } : {}),
+                    ...(updates.paymentStatus !== undefined ? { paymentStatus: updates.paymentStatus } : {}),
+                    ...(updates.documentStatus !== undefined ? { documentStatus: updates.documentStatus } : {}),
+                    ...(updates.ownerConfirmed !== undefined ? { ownerConfirmed: updates.ownerConfirmed } : {}),
+                    ...(updates.allRequirementsDone !== undefined ? { allRequirementsDone: updates.allRequirementsDone } : {}),
+                    ...(updates.issueRemaining !== undefined ? { issueRemaining: updates.issueRemaining } : {}),
+                    ...(updates.issueResolved !== undefined ? { issueResolved: updates.issueResolved } : {}),
+                    ...(updates.ratingScore !== undefined ? { ratingScore: updates.ratingScore } : {}),
+                };
+            const updated = await api.put(`/post-sales/customers/${id}`, { ...updates, metadata: mergedMetadata });
             const formatted = formatCustomer(updated);
             setCustomers(prev => prev.map(c => c.id === id ? formatted : c));
             return formatted;
@@ -121,6 +176,19 @@ export const PostSalesProvider = ({ children }) => {
     };
 
     const getCustomer = (id) => customers.find(c => c.id === id);
+    const getMessageSuggestion = async (customerId, kind, latestUserMessage = '', history = []) => {
+        try {
+            const response = await api.post(`/post-sales/customers/${customerId}/message-suggestion`, {
+                kind,
+                latestUserMessage,
+                history,
+            });
+            return response?.message || '';
+        } catch (err) {
+            console.error('Error fetching post-sales message suggestion:', err);
+            return '';
+        }
+    };
 
     // ─── PAYMENTS ────────────────────────────────────────────────────────────
     const addPayment = async (payment) => {
@@ -146,8 +214,9 @@ export const PostSalesProvider = ({ children }) => {
     const updatePaymentStatus = async (id, status) => {
         try {
             const updated = await api.patch(`/post-sales/payments/${id}/status`, { status });
-            setPayments(prev => prev.map(p => p.id === id ? updated : p));
-            return updated;
+            const formatted = formatPayment(updated);
+            setPayments(prev => prev.map(p => p.id === id ? formatted : p));
+            return formatted;
         } catch (err) {
             console.error('Error updating payment status:', err);
         }
@@ -228,12 +297,26 @@ export const PostSalesProvider = ({ children }) => {
                 name: doc.name,
                 type: doc.type || null,
                 fileUrl: doc.fileUrl || null,
-                status: doc.status || 'pending',
+                status: doc.status === 'verified' ? 'approved' : (doc.status || 'pending'),
             });
-            setDocuments(prev => [created, ...prev]);
-            return created;
+            const formatted = formatDocument(created);
+            setDocuments(prev => [formatted, ...prev]);
+            return formatted;
         } catch (err) {
             console.error('Error adding document:', err);
+            return null;
+        }
+    };
+
+    const updateDocumentStatus = async (id, status) => {
+        try {
+            const backendStatus = status === 'verified' ? 'approved' : status;
+            const updated = await api.patch(`/post-sales/documents/${id}/status`, { status: backendStatus });
+            const formatted = formatDocument(updated);
+            setDocuments(prev => prev.map(d => d.id === id ? formatted : d));
+            return formatted;
+        } catch (err) {
+            console.error('Error updating document status:', err);
             return null;
         }
     };
@@ -263,7 +346,7 @@ export const PostSalesProvider = ({ children }) => {
         <PostSalesContext.Provider value={{
             loading,
             // customers
-            customers, addCustomer, updateCustomer, deleteCustomer, getCustomer,
+            customers, addCustomer, updateCustomer, deleteCustomer, getCustomer, getMessageSuggestion,
             // payments
             payments, addPayment, updatePaymentStatus,
             // automations
@@ -271,7 +354,7 @@ export const PostSalesProvider = ({ children }) => {
             // follow-ups
             followUps, addFollowUp, updateFollowUpStatus,
             // documents
-            documents, addDocument,
+            documents, addDocument, updateDocumentStatus,
             // onboarding
             onboardingFlows, upsertOnboardingStep, getCustomerOnboarding,
             // refresh

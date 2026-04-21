@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { ArrowLeft, Play, Mail, Phone, Building2, Calendar, User, CheckSquare, Plus } from 'lucide-react';
@@ -9,6 +9,7 @@ import CustomerTimeline from './components/CustomerTimeline';
 import PaymentReminderCard from './components/PaymentReminderCard';
 import DocumentUploader from './components/DocumentUploader';
 import OnboardingFlow from './onboarding/OnboardingFlow';
+import { getLanguageSelectOptions } from '../../utils/localeOptions';
 
 const statusColors = {
     'New': 'bg-violet-50 text-violet-700 ring-1 ring-violet-200',
@@ -22,15 +23,34 @@ const statusColors = {
 const docStatusColors = { pending: 'text-gray-400', submitted: 'text-amber-600', verified: 'text-emerald-600', rejected: 'text-red-600' };
 
 const formatDate = (d) => d ? new Date(d).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }) : '—';
+const languageOptions = getLanguageSelectOptions();
+
+function getPostSalesAiNextStep(customer) {
+    if (typeof customer.ratingScore === 'number') {
+        if (customer.ratingScore >= 8) return 'Positive (8-10): Save testimonial and ask referral.';
+        if (customer.ratingScore >= 5) return 'Neutral (5-7): Ask improvement feedback and soft referral.';
+        return 'Negative (1-4): AI resolves first; if unresolved, trigger owner alert.';
+    }
+    if (customer.allRequirementsDone) {
+        if (customer.issueRemaining && !customer.issueResolved) return 'Issue remaining: AI tries to resolve, then owner intervention if still unresolved.';
+        return 'All requirements done: proceed and ask rating 1 to 10.';
+    }
+    if (customer.documentStatus === 'pending') return 'Document status pending: request documents and follow-up Day 0 / Day 2 / Day 4.';
+    if (customer.paymentStatus === 'pending') return 'Payment pending: send reminder and retry Day 0 / Day 1 / Day 3 / Day 5 / Day 7.';
+    if (customer.paymentStatus === 'partial' && !customer.ownerConfirmed) return 'Partial payment: ask payment proof and send to owner for verification.';
+    if (customer.paymentStatus === 'partial' && customer.ownerConfirmed) return 'Owner confirmed: send second confirmation and update payment.';
+    return 'Start follow-up system with call (9 AM-9 PM), WhatsApp 24x7, SMS/email backup.';
+}
 
 const CustomerDetails = () => {
     const { id } = useParams();
     const navigate = useNavigate();
-    const { getCustomer, onboardingFlows, documents, payments, updatePaymentStatus, addDocument } = usePostSales();
+    const { getCustomer, getCustomerOnboarding, documents, payments, updatePaymentStatus, addDocument, updateCustomer, updateDocumentStatus, getMessageSuggestion } = usePostSales();
     const [showOnboarding, setShowOnboarding] = useState(false);
     const [tab, setTab] = useState('overview');
 
     const customer = getCustomer(id);
+    const [suggestedMessage, setSuggestedMessage] = useState('');
     if (!customer) return (
         <div className="flex items-center justify-center h-64 text-gray-400">
             <div className="text-center">
@@ -40,10 +60,26 @@ const CustomerDetails = () => {
         </div>
     );
 
-    const flow = (onboardingFlows || {})[customer.id] || { stepIndex: 0, completedSteps: [] };
+    const onboardingRows = getCustomerOnboarding(customer.id);
+    const completedSteps = onboardingRows
+        .filter((s) => s.status === 'completed')
+        .map((s) => Math.max(0, (s.step_order || 1) - 1));
+    const currentStep = onboardingRows
+        .filter((s) => s.status === 'in_progress')
+        .sort((a, b) => (b.step_order || 0) - (a.step_order || 0))[0];
+    const flow = { stepIndex: currentStep ? Math.max(0, (currentStep.step_order || 1) - 1) : completedSteps.length, completedSteps };
     const custDocs = documents.filter(d => d.customerId === customer.id);
     const custPayments = payments.filter(p => p.customerId === customer.id);
     const TABS = ['overview', 'documents', 'payments', 'timeline'];
+    const suggestionKind = customer.allRequirementsDone ? 'ask_rating' : customer.documentStatus === 'pending' ? 'pending_document' : customer.paymentStatus === 'partial' ? 'partial_payment' : 'pending_payment';
+
+    useEffect(() => {
+        let mounted = true;
+        getMessageSuggestion(customer.id, suggestionKind).then((text) => {
+            if (mounted) setSuggestedMessage(text || '');
+        });
+        return () => { mounted = false; };
+    }, [customer.id, suggestionKind, customer.preferredLocale, customer.autoLanguageSwitch, getMessageSuggestion]);
 
     return (
         <div className="space-y-6">
@@ -107,6 +143,57 @@ const CustomerDetails = () => {
                     <div>
                         <h3 className="font-semibold text-gray-800 text-sm mb-3">Onboarding Progress</h3>
                         <OnboardingProgress completedSteps={flow.completedSteps} stepIndex={flow.stepIndex} compact />
+                    </div>
+                    <div className="pt-2 border-t border-gray-100 space-y-3">
+                        <h3 className="font-semibold text-gray-800 text-sm">AI Workflow</h3>
+                        <div className="grid grid-cols-1 gap-2">
+                            <select value={customer.paymentStatus || 'pending'} onChange={(e) => updateCustomer(customer.id, { paymentStatus: e.target.value })} className="text-xs border border-gray-200 rounded-lg px-2 py-1.5">
+                                <option value="pending">Payment: Pending</option>
+                                <option value="partial">Payment: Partial</option>
+                                <option value="paid">Payment: Paid</option>
+                            </select>
+                            <select value={customer.documentStatus || 'pending'} onChange={(e) => {
+                                updateCustomer(customer.id, { documentStatus: e.target.value });
+                                const pendingDoc = custDocs.find((d) => d.status === 'pending' || d.status === 'verified' || d.status === 'rejected');
+                                if (pendingDoc && (e.target.value === 'verified' || e.target.value === 'rejected')) {
+                                    updateDocumentStatus(pendingDoc.id, e.target.value);
+                                }
+                            }} className="text-xs border border-gray-200 rounded-lg px-2 py-1.5">
+                                <option value="pending">Document: Pending</option>
+                                <option value="submitted">Document: Submitted</option>
+                                <option value="verified">Document: Verified</option>
+                                <option value="rejected">Document: Rejected</option>
+                            </select>
+                            <select value={customer.preferredLocale || 'hing'} onChange={(e) => updateCustomer(customer.id, { preferredLocale: e.target.value })} className="text-xs border border-gray-200 rounded-lg px-2 py-1.5">
+                                {languageOptions.map((l) => <option key={l.value} value={l.value}>{l.label}</option>)}
+                            </select>
+                            <label className="flex items-center gap-2 text-xs text-gray-700">
+                                <input type="checkbox" checked={customer.autoLanguageSwitch !== false} onChange={(e) => updateCustomer(customer.id, { autoLanguageSwitch: e.target.checked })} />
+                                Auto Language Switch
+                            </label>
+                            <label className="flex items-center gap-2 text-xs text-gray-700">
+                                <input type="checkbox" checked={!!customer.ownerConfirmed} onChange={(e) => updateCustomer(customer.id, { ownerConfirmed: e.target.checked })} />
+                                Owner Confirm
+                            </label>
+                            <label className="flex items-center gap-2 text-xs text-gray-700">
+                                <input type="checkbox" checked={!!customer.allRequirementsDone} onChange={(e) => updateCustomer(customer.id, { allRequirementsDone: e.target.checked })} />
+                                All Requirements Done
+                            </label>
+                            <label className="flex items-center gap-2 text-xs text-gray-700">
+                                <input type="checkbox" checked={!!customer.issueRemaining} onChange={(e) => updateCustomer(customer.id, { issueRemaining: e.target.checked })} />
+                                Issue Remaining
+                            </label>
+                            <label className="flex items-center gap-2 text-xs text-gray-700">
+                                <input type="checkbox" checked={!!customer.issueResolved} onChange={(e) => updateCustomer(customer.id, { issueResolved: e.target.checked })} />
+                                Issue Resolved
+                            </label>
+                            <input type="number" min="1" max="10" value={customer.ratingScore ?? ''} placeholder="Rating 1-10" onChange={(e) => updateCustomer(customer.id, { ratingScore: e.target.value === '' ? null : Math.max(1, Math.min(10, Number(e.target.value))) })} className="text-xs border border-gray-200 rounded-lg px-2 py-1.5" />
+                        </div>
+                        <p className="text-xs text-indigo-700 bg-indigo-50 border border-indigo-100 rounded-lg p-2">{getPostSalesAiNextStep(customer)}</p>
+                        <div className="bg-gray-50 border border-gray-200 rounded-lg p-2">
+                            <p className="text-[10px] font-bold text-gray-500 uppercase tracking-wide mb-1">Suggested WhatsApp</p>
+                            <p className="text-xs text-gray-700">{suggestedMessage || 'Generating suggestion...'}</p>
+                        </div>
                     </div>
                 </div>
             </div>

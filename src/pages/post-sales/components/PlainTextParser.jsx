@@ -3,6 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { Sparkles, ArrowRight, Loader2, Check, AlertCircle } from 'lucide-react';
 import { usePostSales } from '../../../context/PostSalesContext';
 import api from '../../../lib/api';
+import { DEFAULT_PREFERRED_LOCALE, getDefaultTimeZone } from '../../../utils/localeOptions';
 
 const PlainTextParser = ({ onCancel, onSuccess }) => {
     const { addCustomer } = usePostSales();
@@ -37,7 +38,10 @@ const PlainTextParser = ({ onCancel, onSuccess }) => {
                     dueDate: extractedData.dueDate ? new Date(extractedData.dueDate).toISOString() : new Date().toISOString(),
                     currency: extractedData.currency || 'INR',
                     notes: extractedData.notes || '',
-                    status: 'active'
+                    status: 'active',
+                    timezone: extractedData.timezone || getDefaultTimeZone(),
+                    preferredLocale: extractedData.preferredLocale || DEFAULT_PREFERRED_LOCALE,
+                    autoLanguageSwitch: extractedData.autoLanguageSwitch !== false,
                 };
 
                 setIsParsing(false);

@@ -1,8 +1,17 @@
 import React, { useState } from 'react';
 import { motion } from 'framer-motion';
 import { ArrowRight, AlertCircle } from 'lucide-react';
+import {
+    DEFAULT_PREFERRED_LOCALE,
+    getAllTimeZones,
+    getDefaultTimeZone,
+    getLanguageSelectOptions,
+    resolveTimeZoneOption
+} from '../../../utils/localeOptions';
 
 const ManualEntryForm = ({ onSuccess, onCancel }) => {
+    const timezoneOptions = getAllTimeZones();
+    const languageOptions = getLanguageSelectOptions();
     const [formData, setFormData] = useState({
         name: '',
         phone: '',
@@ -11,7 +20,10 @@ const ManualEntryForm = ({ onSuccess, onCancel }) => {
         totalDue: '',
         amountPaid: '',
         dueDate: '',
-        currency: 'INR'
+        currency: 'INR',
+        timezone: resolveTimeZoneOption(getDefaultTimeZone(), timezoneOptions),
+        preferredLocale: DEFAULT_PREFERRED_LOCALE,
+        autoLanguageSwitch: true,
     });
 
     const [errors, setErrors] = useState({});
@@ -67,7 +79,10 @@ const ManualEntryForm = ({ onSuccess, onCancel }) => {
             dueDate: formData.dueDate ? new Date(formData.dueDate).toISOString() : new Date().toISOString(),
             currency: formData.currency,
             status: 'active',
-            notes: 'Manually entered'
+            notes: 'Manually entered',
+            timezone: formData.timezone,
+            preferredLocale: formData.preferredLocale,
+            autoLanguageSwitch: formData.autoLanguageSwitch,
         };
 
         if (onSuccess) {
@@ -219,7 +234,8 @@ const ManualEntryForm = ({ onSuccess, onCancel }) => {
                     </div>
 
                     {/* Currency Selector */}
-                    <div>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                        <div>
                         <label className="block text-sm font-semibold text-slate-800 mb-2">
                             Currency
                         </label>
@@ -238,6 +254,44 @@ const ManualEntryForm = ({ onSuccess, onCancel }) => {
                                 </button>
                             ))}
                         </div>
+                        </div>
+                        <div>
+                            <label className="block text-sm font-semibold text-slate-800 mb-2">Timezone</label>
+                            <select
+                                name="timezone"
+                                value={formData.timezone}
+                                onChange={handleInputChange}
+                                className="w-full px-4 py-2.5 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-100 transition-all"
+                            >
+                                {timezoneOptions.map((tz) => (
+                                    <option key={tz} value={tz}>{tz}</option>
+                                ))}
+                            </select>
+                        </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                        <div>
+                            <label className="block text-sm font-semibold text-slate-800 mb-2">Language</label>
+                            <select
+                                name="preferredLocale"
+                                value={formData.preferredLocale}
+                                onChange={handleInputChange}
+                                className="w-full px-4 py-2.5 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-100 transition-all"
+                            >
+                                {languageOptions.map((opt) => (
+                                    <option key={opt.value} value={opt.value}>{opt.label}</option>
+                                ))}
+                            </select>
+                        </div>
+                        <label className="flex items-center gap-2 text-sm font-medium text-slate-700 mt-8">
+                            <input
+                                type="checkbox"
+                                checked={formData.autoLanguageSwitch}
+                                onChange={(e) => setFormData((prev) => ({ ...prev, autoLanguageSwitch: e.target.checked }))}
+                            />
+                            Auto Language Switch
+                        </label>
                     </div>
 
                     {/* Info Message */}
