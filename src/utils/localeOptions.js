@@ -68,3 +68,54 @@ export function getLanguageSelectOptions() {
     cachedLanguageOptions = [{ value: 'hing', label: 'Hinglish' }, ...rest];
     return cachedLanguageOptions;
 }
+
+/**
+ * BCP-47 tag for Web Speech API `recognition.lang` from lead preferred locale (ISO 639-1 or `hing`).
+ * Improves transcription when the lead’s language is not English. Browser support varies by language.
+ */
+export function speechRecognitionLangForLocale(preferredLocale) {
+    const raw = String(preferredLocale || 'en').trim().toLowerCase();
+    const base = raw.split(/[-_]/)[0];
+    const map = {
+        hing: 'hi-IN',
+        hi: 'hi-IN',
+        en: 'en-IN',
+        ta: 'ta-IN',
+        te: 'te-IN',
+        kn: 'kn-IN',
+        ml: 'ml-IN',
+        mr: 'mr-IN',
+        gu: 'gu-IN',
+        pa: 'pa-IN',
+        bn: 'bn-IN',
+        ar: 'ar-SA',
+        ur: 'ur-PK',
+        es: 'es-ES',
+        fr: 'fr-FR',
+        de: 'de-DE',
+        it: 'it-IT',
+        pt: 'pt-BR',
+        ru: 'ru-RU',
+        ja: 'ja-JP',
+        ko: 'ko-KR',
+        zh: 'zh-CN',
+        tr: 'tr-TR',
+        vi: 'vi-VN',
+        th: 'th-TH',
+        id: 'id-ID',
+        ms: 'ms-MY',
+        pl: 'pl-PL',
+        uk: 'uk-UA',
+        nl: 'nl-NL',
+        sv: 'sv-SE',
+        da: 'da-DK',
+        fi: 'fi-FI',
+        no: 'nb-NO',
+        el: 'el-GR',
+        he: 'he-IL',
+        fa: 'fa-IR',
+    };
+    if (map[base]) return map[base];
+    if (/^[a-z]{2}$/.test(base)) return `${base}-${base.toUpperCase()}`;
+    return 'en-IN';
+}

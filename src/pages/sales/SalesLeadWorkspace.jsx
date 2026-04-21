@@ -22,6 +22,7 @@ import {
     isWithinCallActiveWindow,
     callWindowLabel,
 } from '../../utils/salesBotFlow';
+import { speechRecognitionLangForLocale } from '../../utils/localeOptions';
 
 /* ─── Status config ─────────────────────────────────────────── */
 const STATUS_CONFIG = {
@@ -589,7 +590,7 @@ const SalesLeadWorkspace = () => {
 
         try {
             const recognition = new SpeechRecognition();
-            recognition.lang = 'en-IN';
+            recognition.lang = speechRecognitionLangForLocale(lead?.preferredLocale || 'en');
             recognition.interimResults = false;
             recognition.continuous = false;
             recognition.maxAlternatives = 1;
@@ -749,7 +750,7 @@ const SalesLeadWorkspace = () => {
                 history: priorHistory,
                 leadPreferredLocale: lead.preferredLocale || 'hing',
                 leadTimezone: lead.timezone || undefined,
-                message: `Lead name: ${lead.name}\nTheir latest message (you MUST write your entire reply in the same language as this message — English if they wrote English, Hindi if they wrote Hindi, etc.):\n${text}\nWrite one concise WhatsApp reply as the sales rep (no email-style sign-off). One message only.`,
+                message: `Lead name: ${lead.name}\n\nTheir latest message (your reply must be ONLY in the same language(s) and script they used — any language worldwide; mirror them exactly, do not switch to English or another language):\n${text}\n\nWrite one concise WhatsApp reply as the sales rep (no email-style sign-off). One message only.`,
             });
             const aiReply = ai?.response ? sanitizeWhatsappAiReply(ai.response) : null;
             if (aiReply) {
