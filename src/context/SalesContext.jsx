@@ -218,6 +218,20 @@ export const SalesProvider = ({ children }) => {
         fetchLeads();
     }, [fetchLeads]);
 
+    useEffect(() => {
+        if (!user) return undefined;
+        const tick = async () => {
+            try {
+                await api.post('/sales/automation-jobs/dispatch-due', { limit: 25 });
+            } catch (err) {
+                // Silent: this runs in background and should not interrupt sales usage.
+            }
+        };
+        tick();
+        const interval = setInterval(tick, 45000);
+        return () => clearInterval(interval);
+    }, [user]);
+
     const addLead = async (leadData) => {
         const fullName = String(leadData?.name || '').trim();
         const phone = normalizePhone(leadData?.phone || '');
@@ -434,6 +448,27 @@ export const SalesProvider = ({ children }) => {
         }));
     };
 
+    const scheduleAutomationHandshake = async (leadId, data) => {
+        if (!isPersistableLeadId(leadId)) {
+            throw new Error('Automation scheduling is available only for persisted leads.');
+        }
+        const payload = {
+            sourceChannel: data.sourceChannel,
+            targetChannel: data.targetChannel,
+            scheduleAt: data.scheduleAt,
+            payload: data.payload || {},
+        };
+        const job = await api.post(`/sales/${leadId}/automation-jobs`, payload);
+        await refreshLeadActivities(leadId);
+        return job;
+    };
+
+    const getLeadAutomationJobs = async (leadId, status = null) => {
+        if (!isPersistableLeadId(leadId)) return [];
+        const query = status ? `?status=${encodeURIComponent(status)}` : '';
+        return api.get(`/sales/${leadId}/automation-jobs${query}`);
+    };
+
     const value = {
         leads,
         loading,
@@ -442,6 +477,8 @@ export const SalesProvider = ({ children }) => {
         addActionToLead,
         refreshLeadActivities,
         assignLead,
+        scheduleAutomationHandshake,
+        getLeadAutomationJobs,
     };
 
     return (

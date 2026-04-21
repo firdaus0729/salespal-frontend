@@ -196,9 +196,20 @@ export const NotificationProvider = ({ children }) => {
             // Don't play on first load, only on genuinely new arrivals
             if (!isFirstLoad && soundEnabled) {
                 playNotificationSound();
+                const latest = notifications[0];
+                if (latest?.type === 'sales_automation' && typeof window !== 'undefined' && window.speechSynthesis) {
+                    try {
+                        const utter = new window.SpeechSynthesisUtterance('Sales bot action is ready. Open lead workspace now.');
+                        utter.volume = 0.9;
+                        utter.rate = 1;
+                        window.speechSynthesis.speak(utter);
+                    } catch (_) {
+                        // ignore voice alert errors
+                    }
+                }
             }
         }
-    }, [latestNotifId, soundEnabled]);
+    }, [latestNotifId, soundEnabled, notifications]);
 
     // ── Sound toggle handler ──────────────────────────────────────────────
     const setSoundEnabled = useCallback((enabled) => {

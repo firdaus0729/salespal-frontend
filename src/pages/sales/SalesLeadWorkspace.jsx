@@ -189,7 +189,7 @@ const SalesLeadWorkspace = () => {
     const { id } = useParams();
     const navigate = useNavigate();
     const location = useLocation();
-    const { leads, updateLeadStatus, addActionToLead, refreshLeadActivities, assignLead } = useSales();
+    const { leads, updateLeadStatus, addActionToLead, refreshLeadActivities, assignLead, scheduleAutomationHandshake, getLeadAutomationJobs } = useSales();
     const { showToast } = useToast();
 
     const lead = useMemo(() => leads.find(l => l.id === id), [leads, id]);
@@ -209,6 +209,8 @@ const SalesLeadWorkspace = () => {
     const [scheduleDate, setScheduleDate] = useState('');
     const [scheduleTime, setScheduleTime] = useState('');
     const [noteText, setNoteText] = useState('');
+    const [automationJobs, setAutomationJobs] = useState([]);
+    const [creatingAutomation, setCreatingAutomation] = useState(false);
     const [startingLiveCall, setStartingLiveCall] = useState(false);
     const [sendingWhatsApp, setSendingWhatsApp] = useState(false);
     const [isMicMuted, setIsMicMuted] = useState(false);
@@ -934,6 +936,27 @@ const SalesLeadWorkspace = () => {
         waMessagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
     }, [modal, lead, sendingWhatsApp, isWaAiTyping]);
 
+    useEffect(() => {
+        if (!lead?.id) return;
+        let mounted = true;
+        const loadJobs = async () => {
+            try {
+                const rows = await getLeadAutomationJobs(lead.id);
+                if (!mounted) return;
+                setAutomationJobs(Array.isArray(rows) ? rows : []);
+            } catch (_) {
+                if (!mounted) return;
+                setAutomationJobs([]);
+            }
+        };
+        loadJobs();
+        const interval = setInterval(loadJobs, 30000);
+        return () => {
+            mounted = false;
+            clearInterval(interval);
+        };
+    }, [lead?.id, getLeadAutomationJobs]);
+
     if (!lead) {
         return (
             <div className="flex flex-col items-center justify-center min-h-[60vh] gap-4 text-gray-400">
@@ -956,6 +979,37 @@ const SalesLeadWorkspace = () => {
     /* ── Score colour helpers ── */
     const scoreColor = (s) => s >= 80 ? 'text-red-600' : s >= 50 ? 'text-orange-500' : 'text-sky-500';
     const scoreBar = (s) => s >= 80 ? 'bg-red-500' : s >= 50 ? 'bg-orange-400' : 'bg-sky-400';
+    const pendingAutomationJobs = automationJobs.filter((j) => j.status === 'pending');
+
+    const scheduleHandshake = async ({ sourceChannel, targetChannel, when, messageTemplate }) => {
+        if (!lead?.id) return;
+        try {
+            setCreatingAutomation(true);
+            const job = await scheduleAutomationHandshake(lead.id, {
+                sourceChannel,
+                targetChannel,
+                scheduleAt: when,
+                payload: {
+                    messageTemplate: messageTemplate || '',
+                    leadName: lead.name,
+                },
+            });
+            setAutomationJobs((prev) => [job, ...prev]);
+            showToast({
+                title: 'Automation scheduled',
+                description: `Bot will continue on ${targetChannel} at ${new Date(when).toLocaleString()}.`,
+                variant: 'success',
+            });
+        } catch (err) {
+            showToast({
+                title: 'Could not schedule automation',
+                description: err?.message || 'Please try again.',
+                variant: 'warning',
+            });
+        } finally {
+            setCreatingAutomation(false);
+        }
+    };
 
     /* ────────────────────────── MODAL ────────────────────────── */
     const renderModal = () => {
@@ -1344,6 +1398,61 @@ const SalesLeadWorkspace = () => {
                     </div>
                 </div>
             </div>
+
+            <SectionCard title="Bot Call-Chat Handshake" icon={RefreshCw} iconColor="text-indigo-600" className="mb-6">
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                    <button
+                        type="button"
+                        onClick={() => scheduleHandshake({
+                            sourceChannel: 'whatsapp',
+                            targetChannel: 'call',
+                            when: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+                        })}
+                        disabled={creatingAutomation}
+                        className="px-3 py-2 rounded-lg border border-indigo-200 bg-indigo-50 text-indigo-700 text-xs font-semibold hover:bg-indigo-100 disabled:opacity-60"
+                    >
+                        Chat -> Call in 1 hour
+                    </button>
+                    <button
+                        type="button"
+                        onClick={() => scheduleHandshake({
+                            sourceChannel: 'call',
+                            targetChannel: 'whatsapp',
+                            when: new Date(Date.now() + 5 * 60 * 1000).toISOString(),
+                            messageTemplate: `Hi ${lead.name.split(' ')[0]}, continuing from our call. Let's continue here.`,
+                        })}
+                        disabled={creatingAutomation}
+                        className="px-3 py-2 rounded-lg border border-emerald-200 bg-emerald-50 text-emerald-700 text-xs font-semibold hover:bg-emerald-100 disabled:opacity-60"
+                    >
+                        Call -> Chat in 5 min
+                    </button>
+                    <button
+                        type="button"
+                        onClick={() => scheduleHandshake({
+                            sourceChannel: 'whatsapp',
+                            targetChannel: 'call',
+                            when: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+                        })}
+                        disabled={creatingAutomation}
+                        className="px-3 py-2 rounded-lg border border-amber-200 bg-amber-50 text-amber-700 text-xs font-semibold hover:bg-amber-100 disabled:opacity-60"
+                    >
+                        Schedule call tomorrow
+                    </button>
+                </div>
+                <div className="mt-3">
+                    {pendingAutomationJobs.length > 0 ? (
+                        <div className="space-y-1.5">
+                            {pendingAutomationJobs.slice(0, 4).map((job) => (
+                                <div key={job.id} className="text-xs text-gray-600 bg-gray-50 border border-gray-200 rounded px-2.5 py-1.5">
+                                    {job.source_channel} -> {job.target_channel} at {new Date(job.schedule_at).toLocaleString()}
+                                </div>
+                            ))}
+                        </div>
+                    ) : (
+                        <p className="text-xs text-gray-400">No pending bot automation jobs for this lead.</p>
+                    )}
+                </div>
+            </SectionCard>
 
             {/* ─── AI Score Cards ─── */}
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
