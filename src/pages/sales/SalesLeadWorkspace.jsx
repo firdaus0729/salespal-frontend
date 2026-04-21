@@ -190,7 +190,17 @@ const SalesLeadWorkspace = () => {
     const { id } = useParams();
     const navigate = useNavigate();
     const location = useLocation();
-    const { leads, updateLeadStatus, addActionToLead, refreshLeadActivities, assignLead, scheduleAutomationHandshake, getLeadAutomationJobs } = useSales();
+    const {
+        leads,
+        updateLeadStatus,
+        addActionToLead,
+        refreshLeadActivities,
+        assignLead,
+        scheduleAutomationHandshake,
+        getLeadAutomationJobs,
+        updateAutomationJobStatus,
+        cleanupLeadAutomationJobs,
+    } = useSales();
     const { showToast } = useToast();
 
     const lead = useMemo(() => leads.find(l => l.id === id), [leads, id]);
@@ -212,6 +222,7 @@ const SalesLeadWorkspace = () => {
     const [noteText, setNoteText] = useState('');
     const [automationJobs, setAutomationJobs] = useState([]);
     const [creatingAutomation, setCreatingAutomation] = useState(false);
+    const [cancellingAutomationId, setCancellingAutomationId] = useState(null);
     const [incomingCallJob, setIncomingCallJob] = useState(null);
     const [incomingCallSecondsLeft, setIncomingCallSecondsLeft] = useState(0);
     const [startingLiveCall, setStartingLiveCall] = useState(false);
@@ -262,6 +273,7 @@ const SalesLeadWorkspace = () => {
     const playingAudioRef = useRef(null);
     const callRingTimerRef = useRef(null);
     const incomingCallTimeoutRef = useRef(null);
+    const activeIncomingCallJobIdRef = useRef(null);
     const seenDispatchedCallJobsRef = useRef(new Set());
     /** Parsed from GET /integrations/readiness (calling.* only; ignores Google Ads blockers). */
     const [aiReadiness, setAiReadiness] = useState({
@@ -364,10 +376,18 @@ const SalesLeadWorkspace = () => {
         }, 1000);
     };
 
-    const dismissIncomingCall = (kind = 'declined') => {
+    const dismissIncomingCall = async (kind = 'declined') => {
+        const jobId = incomingCallJob?.id;
         stopIncomingRing();
         clearIncomingCallTimeout();
         setIncomingCallSecondsLeft(0);
+        if (jobId) {
+            try {
+                await updateAutomationJobStatus(jobId, 'cancelled');
+            } catch (_) {
+                // non-blocking
+            }
+        }
         if (incomingCallJob) {
             if (kind === 'missed') {
                 addActionToLead(
@@ -564,8 +584,23 @@ const SalesLeadWorkspace = () => {
         });
         setLiveCallTranscript([]);
         callStartedAtRef.current = null;
+        const activeIncomingJobId = activeIncomingCallJobIdRef.current;
+        if (activeIncomingJobId) {
+            try {
+                await updateAutomationJobStatus(activeIncomingJobId, 'completed');
+            } catch (_) {
+                // non-blocking
+            }
+            activeIncomingCallJobIdRef.current = null;
+        }
+        try {
+            await cleanupLeadAutomationJobs(lead.id, 'call');
+        } catch (_) {
+            // non-blocking
+        }
         clearIncomingCallTimeout();
         setIncomingCallSecondsLeft(0);
+        setIncomingCallJob(null);
         setModal(null);
     };
 
@@ -816,6 +851,16 @@ const SalesLeadWorkspace = () => {
             stopIncomingRing();
             clearIncomingCallTimeout();
             setIncomingCallSecondsLeft(0);
+            if (incomingCallJob?.id) {
+                activeIncomingCallJobIdRef.current = incomingCallJob.id;
+                try {
+                    await updateAutomationJobStatus(incomingCallJob.id, 'completed');
+                } catch (_) {
+                    // non-blocking
+                }
+            } else {
+                activeIncomingCallJobIdRef.current = null;
+            }
             setIncomingCallJob(null);
             setAllowVoiceMic(false);
             const opener = response?.assistant_reply ? String(response.assistant_reply).trim() : '';
@@ -1105,7 +1150,12 @@ const SalesLeadWorkspace = () => {
                     leadName: lead.name,
                 },
             });
-            setAutomationJobs((prev) => [job, ...prev]);
+            if (job?.id) {
+                setAutomationJobs((prev) => [job, ...prev]);
+            } else {
+                const refreshed = await getLeadAutomationJobs(lead.id);
+                setAutomationJobs(Array.isArray(refreshed) ? refreshed : []);
+            }
             showToast({
                 title: 'Automation scheduled',
                 description: `Bot will continue on ${targetChannel} at ${new Date(when).toLocaleString()}.`,
@@ -1119,6 +1169,34 @@ const SalesLeadWorkspace = () => {
             });
         } finally {
             setCreatingAutomation(false);
+        }
+    };
+
+    const cancelBookedCallReservation = async (job) => {
+        if (!job?.id || !lead?.id) return;
+        try {
+            setCancellingAutomationId(job.id);
+            await updateAutomationJobStatus(job.id, 'cancelled');
+            setAutomationJobs((prev) => prev.map((row) => (row.id === job.id ? { ...row, status: 'cancelled' } : row)));
+            if (incomingCallJob?.id === job.id) {
+                setIncomingCallJob(null);
+                stopIncomingRing();
+                clearIncomingCallTimeout();
+                setIncomingCallSecondsLeft(0);
+            }
+            showToast({
+                title: 'Call reservation cancelled',
+                description: 'The bot will not call at the scheduled time.',
+                variant: 'success',
+            });
+        } catch (err) {
+            showToast({
+                title: 'Could not cancel reservation',
+                description: err?.message || 'Please try again.',
+                variant: 'warning',
+            });
+        } finally {
+            setCancellingAutomationId(null);
         }
     };
 
@@ -1616,8 +1694,20 @@ const SalesLeadWorkspace = () => {
                     {pendingAutomationJobs.length > 0 ? (
                         <div className="space-y-1.5">
                             {pendingAutomationJobs.slice(0, 4).map((job) => (
-                                <div key={job.id} className="text-xs text-gray-600 bg-gray-50 border border-gray-200 rounded px-2.5 py-1.5">
-                                    {job.source_channel} → {job.target_channel} at {new Date(job.schedule_at).toLocaleString()}
+                                <div key={job.id} className="text-xs text-gray-600 bg-gray-50 border border-gray-200 rounded px-2.5 py-1.5 flex items-center justify-between gap-2">
+                                    <span className="truncate">
+                                        {job.source_channel} → {job.target_channel} at {new Date(job.schedule_at).toLocaleString()}
+                                    </span>
+                                    {job.target_channel === 'call' ? (
+                                        <button
+                                            type="button"
+                                            onClick={() => cancelBookedCallReservation(job)}
+                                            disabled={cancellingAutomationId === job.id}
+                                            className="shrink-0 px-2 py-1 rounded border border-red-200 bg-red-50 text-red-700 hover:bg-red-100 disabled:opacity-60"
+                                        >
+                                            {cancellingAutomationId === job.id ? 'Cancelling…' : 'Cancel'}
+                                        </button>
+                                    ) : null}
                                 </div>
                             ))}
                         </div>

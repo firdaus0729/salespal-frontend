@@ -469,6 +469,16 @@ export const SalesProvider = ({ children }) => {
         return api.get(`/sales/${leadId}/automation-jobs${query}`);
     };
 
+    const updateAutomationJobStatus = async (jobId, status) => {
+        if (!jobId) return null;
+        return api.patch(`/sales/automation-jobs/${jobId}/status`, { status });
+    };
+
+    const cleanupLeadAutomationJobs = async (leadId, targetChannel = 'call') => {
+        if (!isPersistableLeadId(leadId)) return { cancelled: 0 };
+        return api.post(`/sales/${leadId}/automation-jobs/cleanup`, { targetChannel });
+    };
+
     const value = {
         leads,
         loading,
@@ -479,6 +489,8 @@ export const SalesProvider = ({ children }) => {
         assignLead,
         scheduleAutomationHandshake,
         getLeadAutomationJobs,
+        updateAutomationJobStatus,
+        cleanupLeadAutomationJobs,
     };
 
     return (
