@@ -164,6 +164,84 @@ function primeSpeechSynthesisFromUserGesture() {
     }
 }
 
+const CALL_WINDOW_START_HOUR = 9;
+const CALL_WINDOW_END_HOUR = 21; // exclusive
+
+function resolveHourMinute(hour, minute, ampm) {
+    let hh = Number(hour || 0);
+    const mm = Number(minute || 0);
+    const ap = String(ampm || '').toLowerCase();
+    if (ap === 'pm' && hh < 12) hh += 12;
+    if (ap === 'am' && hh === 12) hh = 0;
+    if (hh < 0 || hh > 23 || mm < 0 || mm > 59) return null;
+    return { hh, mm };
+}
+
+function parseCallRequestScheduleAt(text) {
+    const t = String(text || '').toLowerCase();
+    if (!/(call|phone call|ring|voice call)/i.test(t)) return null;
+    const now = new Date();
+    const inHours = t.match(/\b(?:in|after)\s+(\d{1,2})\s*(hour|hours|hr|hrs)\b/i);
+    if (inHours) {
+        const n = Number(inHours[1] || 1);
+        if (Number.isFinite(n) && n > 0) return new Date(now.getTime() + n * 3600000).toISOString();
+    }
+    const inMins = t.match(/\b(?:in|after)\s+(\d{1,3})\s*(minute|minutes|min|mins)\b/i);
+    if (inMins) {
+        const n = Number(inMins[1] || 1);
+        if (Number.isFinite(n) && n > 0) return new Date(now.getTime() + n * 60000).toISOString();
+    }
+    const dayOffset = /\btomorrow\b/i.test(t) ? 1 : 0;
+    const tm = t.match(/\b(?:at\s*)?(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\b/i);
+    if (tm) {
+        const hm = resolveHourMinute(tm[1], tm[2] || 0, tm[3] || '');
+        if (hm) {
+            const d = new Date(now);
+            d.setDate(d.getDate() + dayOffset);
+            d.setHours(hm.hh, hm.mm, 0, 0);
+            if (dayOffset === 0 && d.getTime() < now.getTime()) d.setDate(d.getDate() + 1);
+            return d.toISOString();
+        }
+    }
+    return null;
+}
+
+function getZonedParts(dateInput, timeZone = 'Asia/Kolkata') {
+    const d = dateInput instanceof Date ? dateInput : new Date(dateInput);
+    const parts = new Intl.DateTimeFormat('en-US', {
+        timeZone,
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: false,
+    }).formatToParts(d);
+    return parts.reduce((acc, p) => {
+        if (p.type !== 'literal') acc[p.type] = Number(p.value);
+        return acc;
+    }, {});
+}
+
+function isScheduleWithinCallWindow(scheduleAt, timeZone = 'Asia/Kolkata') {
+    const z = getZonedParts(scheduleAt, timeZone);
+    const hh = Number(z.hour || 0);
+    return hh >= CALL_WINDOW_START_HOUR && hh < CALL_WINDOW_END_HOUR;
+}
+
+function nextCallWindowSuggestion(scheduleAt, timeZone = 'Asia/Kolkata') {
+    const z = getZonedParts(scheduleAt, timeZone);
+    const base = new Date(scheduleAt);
+    const hh = Number(z.hour || 0);
+    if (hh < CALL_WINDOW_START_HOUR) {
+        base.setHours(CALL_WINDOW_START_HOUR, 0, 0, 0);
+        return base;
+    }
+    base.setDate(base.getDate() + 1);
+    base.setHours(CALL_WINDOW_START_HOUR, 0, 0, 0);
+    return base;
+}
+
 /* ─── Small Components ───────────────────────────────────────── */
 const InfoRow = ({ label, value, icon: Icon }) => (
     <div className="flex items-start justify-between gap-2 py-2 border-b border-gray-50 last:border-0">
@@ -916,6 +994,27 @@ const SalesLeadWorkspace = () => {
             const waCommLocal = (lead.communications || []).find(c => c.type === 'whatsapp');
             const priorHistory = buildWhatsappChatHistory(waCommLocal?.history || []);
             addActionToLead(lead.id, 'whatsapp', 'WhatsApp sent', text, { sender: 'SalesRep' });
+
+            const inferredCallScheduleAt = parseCallRequestScheduleAt(text);
+            if (inferredCallScheduleAt && !isScheduleWithinCallWindow(inferredCallScheduleAt, lead.timezone || 'Asia/Kolkata')) {
+                const requestedAt = new Date(inferredCallScheduleAt).toLocaleString('en-US', { timeZone: lead.timezone || 'Asia/Kolkata' });
+                const suggestedAt = nextCallWindowSuggestion(inferredCallScheduleAt, lead.timezone || 'Asia/Kolkata')
+                    .toLocaleString('en-US', { timeZone: lead.timezone || 'Asia/Kolkata' });
+                setIsWaAiTyping(true);
+                clearWaTypingTimer();
+                const blockedReply = `Requested call time ${requestedAt} is outside call hours (9:00 AM - 9:00 PM). Next available slot: ${suggestedAt}.`;
+                waTypingTimeoutRef.current = setTimeout(() => {
+                    addActionToLead(lead.id, 'whatsapp', 'AI WhatsApp follow-up', blockedReply, {
+                        sender: 'AI',
+                        outcome: 'automation_outside_call_window',
+                    });
+                    setIsWaAiTyping(false);
+                    waTypingTimeoutRef.current = null;
+                }, 900);
+                setWaText('');
+                return;
+            }
+
             const ai = await api.post('/ai/chat', {
                 context: 'whatsapp',
                 history: priorHistory,
