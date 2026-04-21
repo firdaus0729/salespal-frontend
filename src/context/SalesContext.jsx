@@ -149,6 +149,15 @@ const priorityToScore = (priority, fallbackScore) => {
     return 35;
 };
 
+/** Intent tile (Hot / Warm / Cold): explicit pipeline Hot/Warm wins; else use AI score bands like the dashboard. */
+const intentLabelFromStatusAndScore = (status, aiScore) => {
+    if (status === 'Hot' || status === 'Warm') return status;
+    const n = typeof aiScore === 'number' && !Number.isNaN(aiScore) ? aiScore : 0;
+    if (n >= 80) return 'Hot';
+    if (n >= 50) return 'Warm';
+    return 'Cold';
+};
+
 const normalizePhone = (phone) => String(phone || '').replace(/[^\d+]/g, '').trim();
 const isValidPhone = (phone) => /^\d{7,15}$/.test(normalizePhone(phone).replace(/^\+/, ''));
 const isValidEmail = (email) => !email || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(email).trim());
@@ -172,7 +181,7 @@ const mapLeadRecord = (lead) => {
         status,
         aiScore,
         dealProbability: typeof lead.value === 'number' && lead.value > 0 ? 80 : 30,
-        scoreLabel: status === 'Hot' ? 'Hot' : status === 'Warm' ? 'Warm' : 'Cold',
+        scoreLabel: intentLabelFromStatusAndScore(status, aiScore),
         lastInteraction: metadata.lastInteraction || 'Lead created',
         assignedTo: lead.assigned_to || 'Unassigned',
         createdDate: lead.created_at || new Date().toISOString(),
@@ -261,9 +270,17 @@ export const SalesProvider = ({ children }) => {
 
     const updateLeadStatus = async (leadId, newStatus) => {
         const previous = leads;
-        setLeads(prev => prev.map(lead =>
-            lead.id === leadId ? { ...lead, status: newStatus } : lead
-        ));
+        setLeads((prev) =>
+            prev.map((lead) =>
+                lead.id === leadId
+                    ? {
+                          ...lead,
+                          status: newStatus,
+                          scoreLabel: intentLabelFromStatusAndScore(newStatus, lead.aiScore),
+                      }
+                    : lead
+            )
+        );
         try {
             await api.put(`/sales/${leadId}`, { stage: uiStatusToStage(newStatus) });
             return true;
