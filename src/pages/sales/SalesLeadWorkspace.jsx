@@ -53,6 +53,48 @@ const TIMELINE_ICONS = {
 
 const AGENTS = ['AI Agent', 'Alex Rep', 'Sarah Closer', 'Mike Seller', 'John Doe', 'Jane Smith'];
 
+/** Intent tier for playbook copy: matches dashboard intent (scoreLabel), else explicit pipeline status. */
+function playbookIntentTier(scoreLabel, status) {
+    const sl = String(scoreLabel || '').trim();
+    if (sl === 'Hot' || sl === 'Warm' || sl === 'Cold') return sl;
+    const st = String(status || '').trim();
+    if (st === 'Hot' || st === 'Warm' || st === 'Cold') return st;
+    return '';
+}
+
+/** Default Context / Recommendation when API has none — differs by Hot vs Warm vs Cold (product playbook). */
+function aiPlaybookDefaults(scoreLabel, status) {
+    const tier = playbookIntentTier(scoreLabel, status);
+    if (tier === 'Hot') {
+        return {
+            context:
+                'High-intent lead—use priority handling. Notify the assigned owner immediately, push for a call or meeting the same day, and confirm date and time. For a visit or in-person meeting, send the exact location or join link right away.',
+            recommendation:
+                'Same day: lock the slot, share location or calendar link, and keep the owner in the loop if anything slips.',
+        };
+    }
+    if (tier === 'Warm') {
+        return {
+            context:
+                'Warm lead—run the follow-up flow. Plan WhatsApp on day 1, 3, and 5 with reminders (same day +1 hour, +1 day). Call the next day around 11:00 or 18:30. If you convert to a meeting, track visit outcome: proceed when done, reschedule for the next day on no-show.',
+            recommendation:
+                'Turn interest into a concrete next step (time + channel) before intent cools; schedule the meeting and set visit status.',
+        };
+    }
+    if (tier === 'Cold') {
+        return {
+            context:
+                'Nurture segment—prioritise campaign flow over aggressive one-to-one chasing. Keep rhythm with a weekly campaign broadcast and only escalate when they reply or show stronger signals.',
+            recommendation:
+                'Keep this lead on the weekly broadcast list; avoid same-day hard pushes unless they engage.',
+        };
+    }
+    return {
+        context: 'AI is analysing lead behaviour.',
+        recommendation: 'No recommendation yet.',
+    };
+}
+
 /** Strip common AI email-style placeholders from WhatsApp drafts */
 function sanitizeWhatsappAiReply(text) {
     let s = String(text || '');
@@ -151,6 +193,10 @@ const SalesLeadWorkspace = () => {
     const { showToast } = useToast();
 
     const lead = useMemo(() => leads.find(l => l.id === id), [leads, id]);
+    const aiPlaybook = useMemo(
+        () => aiPlaybookDefaults(lead?.scoreLabel, lead?.status),
+        [lead?.scoreLabel, lead?.status, lead?.id]
+    );
 
     // Modal
     const [modal, setModal] = useState(null);
@@ -1367,11 +1413,11 @@ const SalesLeadWorkspace = () => {
                         <div className="space-y-3">
                             <div className="bg-blue-50 border border-blue-100 rounded-lg p-3">
                                 <p className="text-[10px] font-bold text-blue-400 uppercase tracking-wide mb-1">Context</p>
-                                <p className="text-sm text-blue-900 leading-relaxed">{lead.insight || 'AI is analysing lead behaviour.'}</p>
+                                <p className="text-sm text-blue-900 leading-relaxed">{lead.insight || aiPlaybook.context}</p>
                             </div>
                             <div className="bg-purple-50 border border-purple-100 rounded-lg p-3">
                                 <p className="text-[10px] font-bold text-purple-400 uppercase tracking-wide mb-1">Recommendation</p>
-                                <p className="text-sm text-purple-900 leading-relaxed">{lead.recommendation || 'No recommendation yet.'}</p>
+                                <p className="text-sm text-purple-900 leading-relaxed">{lead.recommendation || aiPlaybook.recommendation}</p>
                             </div>
                             <div className="grid grid-cols-2 gap-2 mt-1">
                                 <div className="flex flex-col gap-1 bg-emerald-50 border border-emerald-100 rounded-lg p-3">
