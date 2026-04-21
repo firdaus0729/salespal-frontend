@@ -23,6 +23,7 @@ import {
     callWindowLabel,
 } from '../../utils/salesBotFlow';
 import { speechRecognitionLangForLocale } from '../../utils/localeOptions';
+import { playNotificationSound } from '../../utils/notificationSound';
 
 /* ─── Status config ─────────────────────────────────────────── */
 const STATUS_CONFIG = {
@@ -211,6 +212,8 @@ const SalesLeadWorkspace = () => {
     const [noteText, setNoteText] = useState('');
     const [automationJobs, setAutomationJobs] = useState([]);
     const [creatingAutomation, setCreatingAutomation] = useState(false);
+    const [incomingCallJob, setIncomingCallJob] = useState(null);
+    const [incomingCallSecondsLeft, setIncomingCallSecondsLeft] = useState(0);
     const [startingLiveCall, setStartingLiveCall] = useState(false);
     const [sendingWhatsApp, setSendingWhatsApp] = useState(false);
     const [isMicMuted, setIsMicMuted] = useState(false);
@@ -257,6 +260,9 @@ const SalesLeadWorkspace = () => {
     const recordingStreamRef = useRef(null);
     const recordingUrlRef = useRef(null);
     const playingAudioRef = useRef(null);
+    const callRingTimerRef = useRef(null);
+    const incomingCallTimeoutRef = useRef(null);
+    const seenDispatchedCallJobsRef = useRef(new Set());
     /** Parsed from GET /integrations/readiness (calling.* only; ignores Google Ads blockers). */
     const [aiReadiness, setAiReadiness] = useState({
         loading: true,
@@ -315,6 +321,74 @@ const SalesLeadWorkspace = () => {
             clearTimeout(callNoAnswerTimerRef.current);
             callNoAnswerTimerRef.current = null;
         }
+    };
+
+    const clearIncomingCallTimeout = () => {
+        if (incomingCallTimeoutRef.current != null) {
+            clearInterval(incomingCallTimeoutRef.current);
+            incomingCallTimeoutRef.current = null;
+        }
+    };
+
+    const stopIncomingRing = () => {
+        if (callRingTimerRef.current != null) {
+            clearInterval(callRingTimerRef.current);
+            callRingTimerRef.current = null;
+        }
+    };
+
+    const startIncomingRing = () => {
+        stopIncomingRing();
+        playNotificationSound();
+        callRingTimerRef.current = setInterval(() => {
+            playNotificationSound();
+        }, 2500);
+    };
+
+    const startIncomingCallCountdown = () => {
+        clearIncomingCallTimeout();
+        setIncomingCallSecondsLeft(30);
+        incomingCallTimeoutRef.current = setInterval(() => {
+            setIncomingCallSecondsLeft((prev) => {
+                const next = prev - 1;
+                if (next <= 0) {
+                    clearIncomingCallTimeout();
+                    stopIncomingRing();
+                    if (incomingCallJob && !isCallActive) {
+                        dismissIncomingCall('missed');
+                    }
+                    return 0;
+                }
+                return next;
+            });
+        }, 1000);
+    };
+
+    const dismissIncomingCall = (kind = 'declined') => {
+        stopIncomingRing();
+        clearIncomingCallTimeout();
+        setIncomingCallSecondsLeft(0);
+        if (incomingCallJob) {
+            if (kind === 'missed') {
+                addActionToLead(
+                    lead.id,
+                    'call',
+                    'Incoming scheduled call missed',
+                    'Lead did not answer scheduled incoming bot call in time.',
+                    { outcome: 'No Answer', duration: '0m 00s' }
+                );
+            } else {
+                addActionToLead(
+                    lead.id,
+                    'call',
+                    'Incoming scheduled call declined',
+                    'User declined scheduled incoming bot call.',
+                    { outcome: 'Declined', duration: '0m 00s' }
+                );
+            }
+        }
+        setIncomingCallJob(null);
+        setModal(null);
     };
 
     const pushLiveTranscript = (speaker, text) => {
@@ -490,6 +564,8 @@ const SalesLeadWorkspace = () => {
         });
         setLiveCallTranscript([]);
         callStartedAtRef.current = null;
+        clearIncomingCallTimeout();
+        setIncomingCallSecondsLeft(0);
         setModal(null);
     };
 
@@ -712,11 +788,15 @@ const SalesLeadWorkspace = () => {
         primeSpeechSynthesisFromUserGesture();
         setStartingLiveCall(true);
         try {
+            const waCommLocal = (lead.communications || []).find((c) => c.type === 'whatsapp');
+            const history = (waCommLocal?.history || []).slice(-8);
+            const openerContext = history.map((m) => `${m.sender}: ${m.text}`).join('\n');
             const response = await api.post('/ai/voice/session/start', {
                 leadId: lead.id,
                 phone: lead.phone,
                 name: lead.name,
                 locale: lead.preferredLocale || 'hing',
+                openerContext,
             });
             if (voiceCallDismissedRef.current) {
                 return;
@@ -733,6 +813,10 @@ const SalesLeadWorkspace = () => {
             callStartedAtRef.current = Date.now();
             recordingUrlRef.current = null;
             await startCallRecording();
+            stopIncomingRing();
+            clearIncomingCallTimeout();
+            setIncomingCallSecondsLeft(0);
+            setIncomingCallJob(null);
             setAllowVoiceMic(false);
             const opener = response?.assistant_reply ? String(response.assistant_reply).trim() : '';
             if (opener) {
@@ -859,10 +943,17 @@ const SalesLeadWorkspace = () => {
     }, [modal]);
 
     useEffect(() => {
+        if (isCallActive || modal !== 'call') {
+            stopIncomingRing();
+        }
+    }, [isCallActive, modal]);
+
+    useEffect(() => {
         return () => {
             clearWaTypingTimer();
             clearCallNoAnswerTimer();
             clearWaNoReplyTimer();
+            stopIncomingRing();
             stopListening();
             stopSpeaking();
             if (playingAudioRef.current) {
@@ -943,7 +1034,25 @@ const SalesLeadWorkspace = () => {
             try {
                 const rows = await getLeadAutomationJobs(lead.id);
                 if (!mounted) return;
-                setAutomationJobs(Array.isArray(rows) ? rows : []);
+                const list = Array.isArray(rows) ? rows : [];
+                setAutomationJobs(list);
+                const dueCall = list.find(
+                    (j) =>
+                        j.status === 'dispatched' &&
+                        j.target_channel === 'call' &&
+                        !seenDispatchedCallJobsRef.current.has(j.id)
+                );
+                if (dueCall && !isCallActive && !startingLiveCall) {
+                    seenDispatchedCallJobsRef.current.add(dueCall.id);
+                    setIncomingCallJob(dueCall);
+                    startIncomingRing();
+                    startIncomingCallCountdown();
+                    showToast({
+                        title: 'Incoming scheduled bot call',
+                        description: 'Call time reached. Tap the green button to let the bot start speaking.',
+                        variant: 'info',
+                    });
+                }
             } catch (_) {
                 if (!mounted) return;
                 setAutomationJobs([]);
@@ -954,8 +1063,10 @@ const SalesLeadWorkspace = () => {
         return () => {
             mounted = false;
             clearInterval(interval);
+            stopIncomingRing();
+            clearIncomingCallTimeout();
         };
-    }, [lead?.id, getLeadAutomationJobs]);
+    }, [lead?.id, getLeadAutomationJobs, isCallActive, startingLiveCall]);
 
     if (!lead) {
         return (
@@ -1077,8 +1188,16 @@ const SalesLeadWorkspace = () => {
                                                     : isListening
                                                       ? 'Listening — speak after the AI finishes'
                                                       : 'Mic ready'
-                                              : 'Ready — tap the green button to start'}
+                                              : incomingCallJob
+                                                ? 'Incoming scheduled call — tap green button to answer'
+                                                : 'Ready — tap the green button to start'}
                                     </div>
+                                    {!isCallActive && incomingCallJob && (
+                                        <div className="mt-3 text-[11px] text-amber-100 bg-amber-500/20 border border-amber-300/40 rounded px-3 py-1.5">
+                                            Scheduled time reached: {new Date(incomingCallJob.schedule_at).toLocaleString()}.
+                                            {incomingCallSecondsLeft > 0 ? ` Answer in ${incomingCallSecondsLeft}s` : ''}
+                                        </div>
+                                    )}
                                     {isCallActive && lastHeardText ? (
                                         <div className="mt-3 text-xs text-blue-100/90">Heard: “{lastHeardText}”</div>
                                     ) : null}
@@ -1310,10 +1429,64 @@ const SalesLeadWorkspace = () => {
         );
     };
 
+    const renderIncomingCallOverlay = () => {
+        if (!incomingCallJob || isCallActive || startingLiveCall) return null;
+        return (
+            <AnimatePresence>
+                <motion.div
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    exit={{ opacity: 0 }}
+                    className="fixed inset-0 z-[95] bg-gray-950/85 backdrop-blur-sm flex items-center justify-center p-4"
+                >
+                    <motion.div
+                        initial={{ scale: 0.96, y: 12, opacity: 0 }}
+                        animate={{ scale: 1, y: 0, opacity: 1 }}
+                        exit={{ scale: 0.96, y: 12, opacity: 0 }}
+                        className="w-full max-w-md rounded-3xl border border-white/10 bg-gradient-to-b from-blue-900 to-blue-950 text-white p-7 shadow-2xl text-center"
+                    >
+                        <div className="w-24 h-24 rounded-full mx-auto bg-white/10 flex items-center justify-center relative mb-5">
+                            <div className="absolute inset-0 rounded-full border-4 border-emerald-400/40 animate-ping" />
+                            <Phone size={34} />
+                        </div>
+                        <p className="text-xs uppercase tracking-[0.2em] text-emerald-200 font-semibold">Incoming Scheduled Bot Call</p>
+                        <h3 className="mt-2 text-2xl font-bold">{lead.name}</h3>
+                        <p className="text-blue-200 text-sm mt-1">{lead.phone}</p>
+                        <p className="text-blue-100/90 text-xs mt-3">
+                            Scheduled time reached: {new Date(incomingCallJob.schedule_at).toLocaleString()}
+                        </p>
+                        <p className="text-amber-200 text-xs mt-1">Answer in {Math.max(0, incomingCallSecondsLeft)}s</p>
+
+                        <div className="mt-7 grid grid-cols-2 gap-3">
+                            <button
+                                type="button"
+                                onClick={() => dismissIncomingCall('declined')}
+                                className="w-full py-2.5 rounded-xl border border-white/20 bg-white/10 hover:bg-white/20 text-white text-sm font-semibold"
+                            >
+                                Decline
+                            </button>
+                            <button
+                                type="button"
+                                onClick={() => {
+                                    openModal('call');
+                                    startLiveAICall();
+                                }}
+                                className="w-full py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-600 text-white text-sm font-semibold"
+                            >
+                                Accept
+                            </button>
+                        </div>
+                    </motion.div>
+                </motion.div>
+            </AnimatePresence>
+        );
+    };
+
     /* ──────────────────────── RENDER ──────────────────────────── */
     return (
         <div className="font-sans text-gray-900 pb-16">
             {renderModal()}
+            {renderIncomingCallOverlay()}
 
             {/* ─── Back + Header ─── */}
             <div className="mb-5">
@@ -1411,7 +1584,7 @@ const SalesLeadWorkspace = () => {
                         disabled={creatingAutomation}
                         className="px-3 py-2 rounded-lg border border-indigo-200 bg-indigo-50 text-indigo-700 text-xs font-semibold hover:bg-indigo-100 disabled:opacity-60"
                     >
-                        Chat -> Call in 1 hour
+                        Chat → Call in 1 hour
                     </button>
                     <button
                         type="button"
@@ -1424,7 +1597,7 @@ const SalesLeadWorkspace = () => {
                         disabled={creatingAutomation}
                         className="px-3 py-2 rounded-lg border border-emerald-200 bg-emerald-50 text-emerald-700 text-xs font-semibold hover:bg-emerald-100 disabled:opacity-60"
                     >
-                        Call -> Chat in 5 min
+                        Call → Chat in 5 min
                     </button>
                     <button
                         type="button"
@@ -1444,7 +1617,7 @@ const SalesLeadWorkspace = () => {
                         <div className="space-y-1.5">
                             {pendingAutomationJobs.slice(0, 4).map((job) => (
                                 <div key={job.id} className="text-xs text-gray-600 bg-gray-50 border border-gray-200 rounded px-2.5 py-1.5">
-                                    {job.source_channel} -> {job.target_channel} at {new Date(job.schedule_at).toLocaleString()}
+                                    {job.source_channel} → {job.target_channel} at {new Date(job.schedule_at).toLocaleString()}
                                 </div>
                             ))}
                         </div>
