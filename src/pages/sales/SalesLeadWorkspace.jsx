@@ -8,10 +8,20 @@ import {
     BrainCircuit, Clock, Star, Activity, Users, ChevronRight,
     Zap, Target, Heart, BarChart3, BookOpen, CheckCircle,
     AlertCircle, Info, PlusCircle, RefreshCw, Award, Mail,
-    MapPin, ExternalLink
+    MapPin, ExternalLink, PhoneOff, Coffee
 } from 'lucide-react';
 import api from '../../lib/api';
 import { useToast } from '../../components/ui/Toast';
+import {
+    CALL_RESULT,
+    CALL_RESULT_DETAIL,
+    WHATSAPP_REPLY_STATE,
+    WHATSAPP_NO_REPLY_DETAIL,
+    VOICE_SILENCE_MS,
+    WHATSAPP_SILENCE_MS,
+    isWithinCallActiveWindow,
+    callWindowLabel,
+} from '../../utils/salesBotFlow';
 
 /* ─── Status config ─────────────────────────────────────────── */
 const STATUS_CONFIG = {
@@ -136,7 +146,7 @@ const SalesLeadWorkspace = () => {
     const { id } = useParams();
     const navigate = useNavigate();
     const location = useLocation();
-    const { leads, updateLeadStatus, addActionToLead, assignLead } = useSales();
+    const { leads, updateLeadStatus, addActionToLead, refreshLeadActivities, assignLead } = useSales();
     const { showToast } = useToast();
 
     const lead = useMemo(() => leads.find(l => l.id === id), [leads, id]);
@@ -240,6 +250,20 @@ const SalesLeadWorkspace = () => {
         }
     };
 
+    const clearWaNoReplyTimer = () => {
+        if (waNoReplyTimerRef.current != null) {
+            clearTimeout(waNoReplyTimerRef.current);
+            waNoReplyTimerRef.current = null;
+        }
+    };
+
+    const clearCallNoAnswerTimer = () => {
+        if (callNoAnswerTimerRef.current != null) {
+            clearTimeout(callNoAnswerTimerRef.current);
+            callNoAnswerTimerRef.current = null;
+        }
+    };
+
     const pushLiveTranscript = (speaker, text) => {
         const line = String(text || '').trim();
         if (!line) return;
@@ -336,6 +360,7 @@ const SalesLeadWorkspace = () => {
     };
 
     const speakText = (text, onEnd) => {
+        if (callActiveRef.current) clearCallNoAnswerTimer();
         if (!text) {
             if (typeof onEnd === 'function') onEnd();
             return;
@@ -362,6 +387,87 @@ const SalesLeadWorkspace = () => {
         };
         speechRef.current = utterance;
         window.speechSynthesis.speak(utterance);
+    };
+
+    const endLiveAICall = async (opts = {}) => {
+        const reason = opts.reason || 'user_end';
+        voiceSessionStartLockRef.current = false;
+        lastVoiceDupRef.current = { text: '', at: 0 };
+        aiVoiceBusyRef.current = false;
+        setAllowVoiceMic(false);
+        clearPendingListenRestart();
+        clearCallNoAnswerTimer();
+        hasLoggedVoiceConnectedRef.current = false;
+        callActiveRef.current = false;
+        setIsProcessingTurn(false);
+        stopListening();
+        stopSpeaking();
+        setIsCallActive(false);
+        setVoiceSession(null);
+        const recordingUrl = await stopCallRecording();
+        const startedAt = callStartedAtRef.current || Date.now();
+        const seconds = Math.max(1, Math.round((Date.now() - startedAt) / 1000));
+        const mm = Math.floor(seconds / 60);
+        const ss = String(seconds % 60).padStart(2, '0');
+        const duration = `${mm}m ${ss}s`;
+
+        let actionTitle = 'AI Voice Call Completed';
+        let detailText = 'Call ended by user.';
+        let outcomeLabel = 'Completed';
+        if (reason === 'no_answer') {
+            actionTitle = `Call result: ${CALL_RESULT.NO_ANSWER}`;
+            detailText = CALL_RESULT_DETAIL[CALL_RESULT.NO_ANSWER];
+            outcomeLabel = CALL_RESULT.NO_ANSWER;
+        } else if (reason === 'busy') {
+            actionTitle = `Call result: ${CALL_RESULT.BUSY}`;
+            detailText = CALL_RESULT_DETAIL[CALL_RESULT.BUSY];
+            outcomeLabel = CALL_RESULT.BUSY;
+        } else if (reason === 'wrong_number') {
+            actionTitle = `Call result: ${CALL_RESULT.WRONG_NUMBER}`;
+            detailText = CALL_RESULT_DETAIL[CALL_RESULT.WRONG_NUMBER];
+            outcomeLabel = CALL_RESULT.WRONG_NUMBER;
+        }
+
+        addActionToLead(lead.id, 'call', actionTitle, detailText, {
+            outcome: outcomeLabel,
+            duration,
+            recording: recordingUrl ? `Call_${String(lead.id).slice(0, 6)}_${Date.now()}.webm` : null,
+            recordingUrl,
+            transcript: liveCallTranscript,
+        });
+        setLiveCallTranscript([]);
+        callStartedAtRef.current = null;
+        setModal(null);
+    };
+
+    const scheduleCallNoAnswerTimer = () => {
+        clearCallNoAnswerTimer();
+        if (!callActiveRef.current || micMutedRef.current) return;
+        callNoAnswerTimerRef.current = setTimeout(() => {
+            callNoAnswerTimerRef.current = null;
+            if (!callActiveRef.current) return;
+            endLiveAICall({ reason: 'no_answer' });
+        }, VOICE_SILENCE_MS);
+    };
+
+    const scheduleWaNoReplyTimer = () => {
+        clearWaNoReplyTimer();
+        if (!lead?.id) return;
+        waNoReplyTimerRef.current = setTimeout(() => {
+            waNoReplyTimerRef.current = null;
+            addActionToLead(
+                lead.id,
+                'ai_action',
+                `WhatsApp user reply: ${WHATSAPP_REPLY_STATE.NO} (30s)`,
+                WHATSAPP_NO_REPLY_DETAIL,
+                {}
+            );
+            showToast({
+                title: 'No reply from lead',
+                description: WHATSAPP_NO_REPLY_DETAIL,
+                variant: 'default',
+            });
+        }, WHATSAPP_SILENCE_MS);
     };
 
     const stopListening = () => {
@@ -392,6 +498,18 @@ const SalesLeadWorkspace = () => {
         }
         lastVoiceDupRef.current = { text, at: now };
 
+        clearCallNoAnswerTimer();
+        if (!hasLoggedVoiceConnectedRef.current) {
+            hasLoggedVoiceConnectedRef.current = true;
+            addActionToLead(
+                lead.id,
+                'ai_action',
+                `Call result: ${CALL_RESULT.CONNECTED}`,
+                CALL_RESULT_DETAIL[CALL_RESULT.CONNECTED],
+                {}
+            );
+        }
+
         aiVoiceBusyRef.current = true;
         setAllowVoiceMic(false);
         stopListening();
@@ -412,7 +530,10 @@ const SalesLeadWorkspace = () => {
                 pushLiveTranscript('AI', reply);
                 speakText(reply, () => {
                     aiVoiceBusyRef.current = false;
-                    if (callActiveRef.current) setAllowVoiceMic(true);
+                    if (callActiveRef.current) {
+                        setAllowVoiceMic(true);
+                        scheduleCallNoAnswerTimer();
+                    }
                     setIsProcessingTurn(false);
                 });
             } else {
@@ -525,6 +646,14 @@ const SalesLeadWorkspace = () => {
             });
             return;
         }
+        if (!isWithinCallActiveWindow(lead.timezone)) {
+            showToast({
+                title: 'Outside calling hours',
+                description: callWindowLabel(lead.timezone),
+                variant: 'warning',
+            });
+            return;
+        }
         voiceSessionStartLockRef.current = true;
         voiceCallDismissedRef.current = false;
         primeSpeechSynthesisFromUserGesture();
@@ -534,7 +663,7 @@ const SalesLeadWorkspace = () => {
                 leadId: lead.id,
                 phone: lead.phone,
                 name: lead.name,
-                locale: 'hing',
+                locale: lead.preferredLocale || 'hing',
             });
             if (voiceCallDismissedRef.current) {
                 return;
@@ -546,6 +675,7 @@ const SalesLeadWorkspace = () => {
             });
             callActiveRef.current = true;
             setIsCallActive(true);
+            hasLoggedVoiceConnectedRef.current = false;
             setLiveCallTranscript([]);
             callStartedAtRef.current = Date.now();
             recordingUrlRef.current = null;
@@ -557,10 +687,12 @@ const SalesLeadWorkspace = () => {
                 speakText(opener, () => {
                     if (callActiveRef.current && !voiceCallDismissedRef.current) {
                         setAllowVoiceMic(true);
+                        scheduleCallNoAnswerTimer();
                     }
                 });
             } else {
                 setAllowVoiceMic(true);
+                scheduleCallNoAnswerTimer();
             }
             addActionToLead(
                 lead.id,
@@ -591,39 +723,10 @@ const SalesLeadWorkspace = () => {
         }
     };
 
-    const endLiveAICall = async () => {
-        voiceSessionStartLockRef.current = false;
-        lastVoiceDupRef.current = { text: '', at: 0 };
-        aiVoiceBusyRef.current = false;
-        setAllowVoiceMic(false);
-        clearPendingListenRestart();
-        callActiveRef.current = false;
-        setIsProcessingTurn(false);
-        stopListening();
-        stopSpeaking();
-        setIsCallActive(false);
-        setVoiceSession(null);
-        const recordingUrl = await stopCallRecording();
-        const startedAt = callStartedAtRef.current || Date.now();
-        const seconds = Math.max(1, Math.round((Date.now() - startedAt) / 1000));
-        const mm = Math.floor(seconds / 60);
-        const ss = String(seconds % 60).padStart(2, '0');
-        const duration = `${mm}m ${ss}s`;
-        addActionToLead(lead.id, 'call', 'AI Voice Call Completed', 'Call ended by user.', {
-            outcome: 'Completed',
-            duration,
-            recording: recordingUrl ? `Call_${String(lead.id).slice(0, 6)}_${Date.now()}.webm` : null,
-            recordingUrl,
-            transcript: liveCallTranscript,
-        });
-        setLiveCallTranscript([]);
-        callStartedAtRef.current = null;
-        setModal(null);
-    };
-
     const sendAIAssistedWhatsApp = async (rawText) => {
         const text = String(rawText || '').trim();
         if (!text) return;
+        clearWaNoReplyTimer();
         if (!aiReadiness.chatReady) {
             showToast({
                 title: 'WhatsApp AI is not ready',
@@ -640,7 +743,9 @@ const SalesLeadWorkspace = () => {
             const ai = await api.post('/ai/chat', {
                 context: 'whatsapp',
                 history: priorHistory,
-                message: `Lead name: ${lead.name}\nTheir latest message: ${text}\nWrite one concise WhatsApp reply as the sales rep (no email-style sign-off). One message only.`,
+                leadPreferredLocale: lead.preferredLocale || 'hing',
+                leadTimezone: lead.timezone || undefined,
+                message: `Lead name: ${lead.name}\nTheir latest message: ${text}\nWrite one concise WhatsApp reply as the sales rep (no email-style sign-off). One message only. Match the language of their latest message.`,
             });
             const aiReply = ai?.response ? sanitizeWhatsappAiReply(ai.response) : null;
             if (aiReply) {
@@ -651,6 +756,7 @@ const SalesLeadWorkspace = () => {
                     addActionToLead(lead.id, 'whatsapp', 'AI WhatsApp follow-up', aiReply, { sender: 'AI' });
                     setIsWaAiTyping(false);
                     waTypingTimeoutRef.current = null;
+                    scheduleWaNoReplyTimer();
                 }, delay);
                 if (ai?.fallback) {
                     showToast({
@@ -669,6 +775,7 @@ const SalesLeadWorkspace = () => {
                 addActionToLead(lead.id, 'whatsapp', 'AI WhatsApp follow-up', fallbackReply, { sender: 'AI' });
                 setIsWaAiTyping(false);
                 waTypingTimeoutRef.current = null;
+                scheduleWaNoReplyTimer();
             }, Math.min(4000, Math.max(900, fallbackReply.length * 20)));
             addActionToLead(lead.id, 'whatsapp', 'WhatsApp AI fallback', err?.message || 'AI service unavailable');
             showToast({
@@ -687,8 +794,22 @@ const SalesLeadWorkspace = () => {
     }, [isSpeakerMuted]);
 
     useEffect(() => {
+        isProcessingTurnRef.current = isProcessingTurn;
+    }, [isProcessingTurn]);
+
+    useEffect(() => {
+        if (isMicMuted) clearCallNoAnswerTimer();
+    }, [isMicMuted]);
+
+    useEffect(() => {
+        if (modal !== 'whatsapp') clearWaNoReplyTimer();
+    }, [modal]);
+
+    useEffect(() => {
         return () => {
             clearWaTypingTimer();
+            clearCallNoAnswerTimer();
+            clearWaNoReplyTimer();
             stopListening();
             stopSpeaking();
             if (playingAudioRef.current) {
@@ -701,6 +822,11 @@ const SalesLeadWorkspace = () => {
             }
         };
     }, []);
+
+    useEffect(() => {
+        if (!lead?.id) return;
+        refreshLeadActivities(lead.id);
+    }, [lead?.id, refreshLeadActivities]);
 
     useEffect(() => {
         const loadReadiness = async () => {
@@ -774,6 +900,7 @@ const SalesLeadWorkspace = () => {
     const calls = (lead.communications || []).filter(c => c.type === 'call');
     const waComm = (lead.communications || []).find(c => c.type === 'whatsapp');
     const waHistory = waComm?.history || [];
+    const callAllowedNow = isWithinCallActiveWindow(lead.timezone);
 
     /* ── Score colour helpers ── */
     const scoreColor = (s) => s >= 80 ? 'text-red-600' : s >= 50 ? 'text-orange-500' : 'text-sky-500';
@@ -801,6 +928,11 @@ const SalesLeadWorkspace = () => {
                         {/* CALL */}
                         {modal === 'call' && (
                             <div className="bg-gradient-to-b from-blue-900 to-blue-950 text-white flex flex-col">
+                                {!callAllowedNow && !isCallActive && (
+                                    <div className="mx-4 mt-4 rounded-lg bg-amber-500/20 border border-amber-400/40 text-amber-100 text-xs px-3 py-2 text-left leading-snug">
+                                        Calls are only active 9:00 AM – 9:00 PM in the lead&apos;s timezone. {callWindowLabel(lead.timezone)}
+                                    </div>
+                                )}
                                 <button
                                     type="button"
                                     onClick={() => {
@@ -825,6 +957,7 @@ const SalesLeadWorkspace = () => {
                                     </div>
                                     <h3 className="text-2xl font-bold">{lead.name}</h3>
                                     <p className="text-blue-200 text-sm mt-1 font-medium tracking-widest">{lead.phone}</p>
+                                    <p className="text-blue-200/70 text-[10px] mt-1 px-2 max-w-xs">{callWindowLabel(lead.timezone)}</p>
                                     <div className="flex items-center gap-2 mt-6 bg-white/10 border border-white/10 px-4 py-2 rounded-full text-emerald-300 text-sm font-semibold max-w-[90%] flex-wrap justify-center">
                                         <span
                                             className={`w-2 h-2 rounded-full shrink-0 ${startingLiveCall ? 'bg-amber-400 animate-pulse' : isCallActive ? 'bg-emerald-400' : 'bg-slate-300'}`}
@@ -854,6 +987,27 @@ const SalesLeadWorkspace = () => {
                                             <p className="text-xs text-blue-100/80">Live call history appears here.</p>
                                         )}
                                     </div>
+                                    {isCallActive && (
+                                        <div className="mt-4 flex flex-wrap gap-2 justify-center w-full max-w-sm">
+                                            <button
+                                                type="button"
+                                                onClick={() => endLiveAICall({ reason: 'busy' })}
+                                                disabled={!voiceMicAllowed || isProcessingTurn}
+                                                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold bg-white/15 border border-white/20 hover:bg-white/25 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                                                title="Lead is busy — Retry next slot"
+                                            >
+                                                <Coffee size={14} /> Busy
+                                            </button>
+                                            <button
+                                                type="button"
+                                                onClick={() => endLiveAICall({ reason: 'wrong_number' })}
+                                                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold bg-white/15 border border-white/20 hover:bg-white/25 transition-colors"
+                                                title="Wrong number — stop call"
+                                            >
+                                                <PhoneOff size={14} /> Wrong number
+                                            </button>
+                                        </div>
+                                    )}
                                 </div>
                                 <div className="flex justify-center gap-6 pb-10">
                                     <button
@@ -877,8 +1031,8 @@ const SalesLeadWorkspace = () => {
                                     </button>
                                     <button
                                         type="button"
-                                        onClick={isCallActive ? endLiveAICall : startLiveAICall}
-                                        disabled={startingLiveCall}
+                                        onClick={isCallActive ? () => endLiveAICall() : startLiveAICall}
+                                        disabled={startingLiveCall || (!isCallActive && !callAllowedNow)}
                                         className={`w-16 h-16 rounded-full flex items-center justify-center shadow-lg transition-transform hover:scale-105 disabled:opacity-60 disabled:cursor-not-allowed disabled:hover:scale-100 ${
                                             isCallActive
                                                 ? 'bg-red-500 hover:bg-red-600 shadow-red-500/30'
@@ -927,7 +1081,7 @@ const SalesLeadWorkspace = () => {
                                     <div className="w-10 h-10 bg-white/20 rounded-full flex items-center justify-center font-bold text-lg shrink-0">{lead.name[0]}</div>
                                     <div>
                                         <p className="font-bold text-sm">{lead.name}</p>
-                                        <p className="text-xs text-white/60">{lead.phone} · Online</p>
+                                        <p className="text-xs text-white/60">{lead.phone} · Active 24/7</p>
                                     </div>
                                 </div>
                                 <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden bg-[#ECE5DD] p-4 flex flex-col gap-2">

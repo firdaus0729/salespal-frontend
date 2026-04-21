@@ -1,5 +1,12 @@
 import React, { useState, useMemo } from 'react';
 import { useSales } from '../../context/SalesContext';
+import {
+    getAllTimeZones,
+    getDefaultTimeZone,
+    getLanguageSelectOptions,
+    DEFAULT_PREFERRED_LOCALE,
+    resolveTimeZoneOption,
+} from '../../utils/localeOptions';
 import { useToast } from '../../components/ui/Toast';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -72,7 +79,16 @@ const { leads, updateLeadStatus, addLead } = useSales();
     const [sort, setSort] = useState('newest');
     const [showSort, setShowSort] = useState(false);
 const [showAddLead, setShowAddLead] = useState(false);
-    const [newLeadForm, setNewLeadForm] = useState({ name: '', phone: '', email: '', campaign: '' });
+    const timeZoneList = useMemo(() => getAllTimeZones(), []);
+    const languageOptions = useMemo(() => getLanguageSelectOptions(), []);
+    const [newLeadForm, setNewLeadForm] = useState(() => ({
+        name: '',
+        phone: '',
+        email: '',
+        campaign: '',
+        timezone: resolveTimeZoneOption(getDefaultTimeZone(), getAllTimeZones()),
+        preferredLocale: DEFAULT_PREFERRED_LOCALE,
+    }));
     const [addingLead, setAddingLead] = useState(false);
     const [addError, setAddError] = useState('');
 
@@ -85,6 +101,8 @@ const [showAddLead, setShowAddLead] = useState(false);
             phone: newLeadForm.phone.trim(),
             email: newLeadForm.email.trim(),
             campaign: newLeadForm.campaign.trim(),
+            timezone: newLeadForm.timezone?.trim() || null,
+            preferredLocale: newLeadForm.preferredLocale || DEFAULT_PREFERRED_LOCALE,
             source: 'Manual',
             status: 'New',
         };
@@ -107,7 +125,14 @@ const [showAddLead, setShowAddLead] = useState(false);
         setAddError('');
         try {
             await addLead(payload);
-            setNewLeadForm({ name: '', phone: '', email: '', campaign: '' });
+            setNewLeadForm({
+                name: '',
+                phone: '',
+                email: '',
+                campaign: '',
+                timezone: resolveTimeZoneOption(getDefaultTimeZone(), timeZoneList),
+                preferredLocale: DEFAULT_PREFERRED_LOCALE,
+            });
             setShowAddLead(false);
             showToast({
                 title: 'Lead added',
@@ -270,6 +295,32 @@ const [showAddLead, setShowAddLead] = useState(false);
                                         placeholder="Campaign name"
                                         className="w-full px-3 py-2.5 border border-gray-200 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-400"
                                     />
+                                </div>
+                                <div>
+                                    <label className="text-xs font-bold text-gray-500 uppercase tracking-wide block mb-1.5">Timezone</label>
+                                    <select
+                                        value={resolveTimeZoneOption(newLeadForm.timezone, timeZoneList)}
+                                        onChange={(e) => setNewLeadForm(p => ({ ...p, timezone: e.target.value }))}
+                                        className="w-full px-3 py-2.5 border border-gray-200 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-400 max-h-40"
+                                        size={1}
+                                    >
+                                        {timeZoneList.map((tz) => (
+                                            <option key={tz} value={tz}>{tz}</option>
+                                        ))}
+                                    </select>
+                                </div>
+                                <div>
+                                    <label className="text-xs font-bold text-gray-500 uppercase tracking-wide block mb-1.5">Language</label>
+                                    <select
+                                        value={newLeadForm.preferredLocale}
+                                        onChange={(e) => setNewLeadForm(p => ({ ...p, preferredLocale: e.target.value }))}
+                                        className="w-full px-3 py-2.5 border border-gray-200 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-400 max-h-40"
+                                    >
+                                        {languageOptions.map((opt) => (
+                                            <option key={opt.value} value={opt.value}>{opt.label}</option>
+                                        ))}
+                                    </select>
+                                    <p className="text-[11px] text-gray-400 mt-1">Default: Hinglish. AI call and WhatsApp match the lead&apos;s language when possible.</p>
                                 </div>
 
                                 <div className="flex items-center gap-2 pt-3">

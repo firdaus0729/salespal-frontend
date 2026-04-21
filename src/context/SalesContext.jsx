@@ -1,6 +1,12 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import api from '../lib/api';
 import { useAuth } from './AuthContext';
+import { DEFAULT_PREFERRED_LOCALE } from '../utils/localeOptions';
+import {
+    buildLeadActionPayload,
+    hydrateLeadStateFromActions,
+    isPersistableLeadId,
+} from '../utils/salesActivityHydrate';
 
 const SalesContext = createContext(null);
 
@@ -17,6 +23,8 @@ const initialLeads = [
         id: '1',
         name: 'Priya Sharma',
         phone: '98xxxx',
+        preferredLocale: 'hing',
+        timezone: 'Asia/Kolkata',
         source: 'Meta Ads',
         project: 'Real Estate',
         campaign: 'Summer Sale 2026',
@@ -67,6 +75,8 @@ const initialLeads = [
         id: '2',
         name: 'Rahul Kumar',
         phone: '99xxxx',
+        preferredLocale: 'hing',
+        timezone: 'Asia/Kolkata',
         source: 'Google Ads',
         project: 'Coaching',
         campaign: 'Winter Special',
@@ -166,6 +176,8 @@ const mapLeadRecord = (lead) => {
         lastInteraction: metadata.lastInteraction || 'Lead created',
         assignedTo: lead.assigned_to || 'Unassigned',
         createdDate: lead.created_at || new Date().toISOString(),
+        timezone: metadata.timezone || null,
+        preferredLocale: metadata.preferredLocale || DEFAULT_PREFERRED_LOCALE,
         rawDeal: lead,
         timeline: [],
         communications: [],
@@ -232,6 +244,10 @@ export const SalesProvider = ({ children }) => {
                 metadata: {
                     campaignName: leadData?.campaign?.trim() || null,
                     projectName: leadData?.project?.trim() || null,
+                    timezone: leadData?.timezone?.trim() || null,
+                    preferredLocale: String(leadData?.preferredLocale || DEFAULT_PREFERRED_LOCALE)
+                        .trim()
+                        .toLowerCase() || DEFAULT_PREFERRED_LOCALE,
                 },
             });
             const mappedLead = mapLeadRecord(createdLead);
@@ -258,87 +274,127 @@ export const SalesProvider = ({ children }) => {
         }
     };
 
-    const addActionToLead = (leadId, type, action, detail, additionalData = {}) => {
-        setLeads(prev => prev.map(lead => {
-            if (lead.id !== leadId) return lead;
+    const refreshLeadActivities = useCallback(async (leadId) => {
+        if (!user || !isPersistableLeadId(leadId)) return;
+        try {
+            const rows = await api.get(`/sales/${leadId}/actions`);
+            const rowsArr = Array.isArray(rows) ? rows : [];
+            const hydrated = hydrateLeadStateFromActions(rowsArr);
+            setLeads((prev) =>
+                prev.map((l) =>
+                    l.id === leadId
+                        ? {
+                              ...l,
+                              timeline: hydrated.timeline,
+                              communications: hydrated.communications,
+                              followups: hydrated.followups,
+                              lastInteraction: hydrated.lastInteraction || l.lastInteraction,
+                          }
+                        : l
+                )
+            );
+        } catch (err) {
+            console.error('refreshLeadActivities:', err);
+        }
+    }, [user]);
 
-            const now = new Date();
-            const timeStr = now.toLocaleDateString() + ' ' + now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    const addActionToLead = async (leadId, type, action, detail, additionalData = {}) => {
+        let serverRow = null;
+        if (isPersistableLeadId(leadId)) {
+            try {
+                serverRow = await api.post(
+                    `/sales/${leadId}/actions`,
+                    buildLeadActionPayload(type, action, detail, additionalData)
+                );
+            } catch (e) {
+                console.error('Persist lead action failed:', e);
+            }
+        }
 
-            const newEvent = {
-                id: Date.now(),
-                type,
-                action,
-                time: timeStr,
-                detail
-            };
+        setLeads((prev) =>
+            prev.map((lead) => {
+                if (lead.id !== leadId) return lead;
 
-            const updatedTimeline = [newEvent, ...(lead.timeline || [])];
-            let updatedCommunications = lead.communications || [];
-            let updatedFollowups = lead.followups || [];
+                const now = new Date();
+                const timeStr =
+                    now.toLocaleDateString() +
+                    ' ' +
+                    now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
-            if (type === 'call') {
-                updatedCommunications = [
-                    {
-                        id: Date.now() + 1,
-                        type: 'call',
-                        time: timeStr,
-                        duration: additionalData.duration || '0m 0s',
-                        outcome: additionalData.outcome || 'Logged',
-                        recording: additionalData.recording,
-                        recordingUrl: additionalData.recordingUrl || null,
-                        transcript: additionalData.transcript || []
-                    },
-                    ...updatedCommunications
-                ];
-            } else if (type === 'whatsapp') {
-                // Find existing whatsapp comm or create new
-                const existingWaIdx = updatedCommunications.findIndex(c => c.type === 'whatsapp');
-                const newMsg = {
-                    id: Date.now() + 2,
-                    sender: additionalData.sender || 'SalesRep',
-                    text: detail,
-                    time: timeStr
+                const newEvent = {
+                    id: serverRow?.id || Date.now(),
+                    type,
+                    action,
+                    time: timeStr,
+                    detail,
                 };
 
-                if (existingWaIdx >= 0) {
-                    const existingWa = updatedCommunications[existingWaIdx];
-                    updatedCommunications[existingWaIdx] = {
-                        ...existingWa,
-                        history: [...(existingWa.history || []), newMsg]
-                    };
-                } else {
+                const updatedTimeline = [newEvent, ...(lead.timeline || [])];
+                let updatedCommunications = lead.communications || [];
+                let updatedFollowups = lead.followups || [];
+
+                if (type === 'call') {
                     updatedCommunications = [
                         {
-                            id: Date.now() + 1,
-                            type: 'whatsapp',
-                            history: [newMsg]
+                            id: serverRow?.id || Date.now() + 1,
+                            type: 'call',
+                            time: timeStr,
+                            duration: additionalData.duration || '0m 0s',
+                            outcome: additionalData.outcome || 'Logged',
+                            recording: additionalData.recording,
+                            recordingUrl: additionalData.recordingUrl || null,
+                            transcript: additionalData.transcript || [],
                         },
-                        ...updatedCommunications
+                        ...updatedCommunications,
                     ];
-                }
-            } else if (type === 'meeting' && additionalData.date) {
-                updatedFollowups = [
-                    {
-                        id: Date.now() + 3,
-                        task: `Meeting scheduled: ${detail}`,
-                        status: 'Pending',
-                        time: additionalData.date + (additionalData.time ? ' ' + additionalData.time : '')
-                    },
-                    ...updatedFollowups
-                ];
-            } else if (type === 'note') {
-                // Note just goes to timeline, no extra collections
-            }
+                } else if (type === 'whatsapp') {
+                    const existingWaIdx = updatedCommunications.findIndex((c) => c.type === 'whatsapp');
+                    const newMsg = {
+                        id: serverRow?.id || Date.now() + 2,
+                        sender: additionalData.sender || 'SalesRep',
+                        text: detail,
+                        time: timeStr,
+                    };
 
-            return {
-                ...lead,
-                timeline: updatedTimeline,
-                communications: updatedCommunications,
-                followups: updatedFollowups,
-                lastInteraction: action
-            };
-        }));
+                    if (existingWaIdx >= 0) {
+                        const existingWa = updatedCommunications[existingWaIdx];
+                        updatedCommunications[existingWaIdx] = {
+                            ...existingWa,
+                            history: [...(existingWa.history || []), newMsg],
+                        };
+                    } else {
+                        updatedCommunications = [
+                            {
+                                id: Date.now() + 1,
+                                type: 'whatsapp',
+                                history: [newMsg],
+                            },
+                            ...updatedCommunications,
+                        ];
+                    }
+                } else if (type === 'meeting' && additionalData.date) {
+                    updatedFollowups = [
+                        {
+                            id: serverRow?.id || Date.now() + 3,
+                            task: `Meeting scheduled: ${detail}`,
+                            status: 'Pending',
+                            time: additionalData.date + (additionalData.time ? ' ' + additionalData.time : ''),
+                        },
+                        ...updatedFollowups,
+                    ];
+                } else if (type === 'note') {
+                    /* timeline only */
+                }
+
+                return {
+                    ...lead,
+                    timeline: updatedTimeline,
+                    communications: updatedCommunications,
+                    followups: updatedFollowups,
+                    lastInteraction: action,
+                };
+            })
+        );
     };
 
     const assignLead = (leadId, agentName) => {
@@ -367,7 +423,8 @@ export const SalesProvider = ({ children }) => {
         addLead,
         updateLeadStatus,
         addActionToLead,
-        assignLead
+        refreshLeadActivities,
+        assignLead,
     };
 
     return (
