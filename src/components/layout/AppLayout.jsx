@@ -22,6 +22,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import SidebarUserMenu from './SidebarUserMenu';
 import { useAuth } from '../../context/AuthContext';
 import { useMaintenance } from '../../context/MaintenanceContext';
+import { useSubscription } from '../../commerce/SubscriptionContext';
 import GlobalMaintenancePage from '../maintenance/GlobalMaintenancePage';
 import MaintenanceBanner from '../maintenance/MaintenanceBanner';
 
@@ -37,6 +38,7 @@ const AppLayout = () => {
     const navigate = useNavigate();
     const location = useLocation();
     const { user } = useAuth();
+    const { isModuleActive } = useSubscription();
     const { isGlobalMaintenance, isModuleUnderMaintenance, loading: maintenanceLoading } = useMaintenance();
 
     const isAdmin = user?.role === 'admin';
@@ -157,7 +159,8 @@ const AppLayout = () => {
 
                         // Check if this module is under maintenance
                         const moduleUnderMaintenance = item.moduleKey && isModuleUnderMaintenance(item.moduleKey);
-                        const isModuleDisabled = moduleUnderMaintenance;
+                        const subscriptionInactive = item.moduleKey ? !isModuleActive(item.moduleKey) : false;
+                        const isModuleDisabled = moduleUnderMaintenance || subscriptionInactive;
 
                         return (
                             <div key={item.path}>
@@ -186,6 +189,12 @@ const AppLayout = () => {
                                                         Maintenance
                                                     </span>
                                                 )}
+                                                {subscriptionInactive && !moduleUnderMaintenance && (
+                                                    <span className="flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[10px] font-semibold bg-gray-100 text-gray-500 border border-gray-200 leading-tight">
+                                                        <Wrench size={10} />
+                                                        Locked
+                                                    </span>
+                                                )}
                                             </div>
                                             {!isModuleDisabled && (
                                                 isExpanded ? <ChevronDown size={16} /> : <ChevronRight size={16} />
@@ -194,7 +203,7 @@ const AppLayout = () => {
                                         {/* Tooltip for disabled modules */}
                                         {isModuleDisabled && (
                                             <div className="absolute left-full top-1/2 -translate-y-1/2 ml-2 px-2.5 py-1.5 rounded-lg bg-gray-900 text-white text-xs font-medium whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none z-50 shadow-lg">
-                                                Currently under maintenance
+                                                {moduleUnderMaintenance ? 'Currently under maintenance' : 'Subscription required'}
                                             </div>
                                         )}
                                     </div>

@@ -1,9 +1,11 @@
 import React, { useEffect, useState } from 'react';
 import { motion } from 'framer-motion';
+import { AnimatePresence } from 'framer-motion';
 import { Zap, MessageCircle, Mail, PhoneCall, Smartphone, ArrowLeft, Check, Plus } from 'lucide-react';
 import { usePostSales } from '../../context/PostSalesContext';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { getPostSalesTemplate } from '../../utils/postSalesLanguageTemplates';
+import { useToast } from '../../components/ui/Toast';
 
 const formatCurrency = (a) => new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 }).format(a);
 const formatDate = (d) => d ? new Date(d).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' }) : '—';
@@ -26,6 +28,7 @@ const Automations = () => {
     const location = useLocation();
     const navigate = useNavigate();
     const { addAutomation, getCustomerAutomations, toggleAutomation, deployedNumbers } = usePostSales();
+    const { showToast } = useToast();
 
     // Selected customer data from Router state
     const customerData = location.state || null;
@@ -37,6 +40,7 @@ const Automations = () => {
     const [customNote, setCustomNote] = useState('');
     const [botNumber, setBotNumber] = useState('');
     const [saved, setSaved] = useState(false);
+    const [saveError, setSaveError] = useState('');
 
     useEffect(() => {
         if (!(channel === 'ai_call' || channel === 'whatsapp')) return;
@@ -64,7 +68,19 @@ const Automations = () => {
 
     const handleSave = () => {
         if (!customerData) return;
-        if (timing === 'custom' && !customDate) return;
+        if (timing === 'custom' && !customDate) {
+            const msg = 'Please select a custom date before saving.';
+            setSaveError(msg);
+            showToast({ title: 'Missing custom date', description: msg, variant: 'warning' });
+            return;
+        }
+        if ((channel === 'ai_call' || channel === 'whatsapp') && !botNumber) {
+            const msg = 'Please select a deployed number for this channel.';
+            setSaveError(msg);
+            showToast({ title: 'Missing deployed number', description: msg, variant: 'warning' });
+            return;
+        }
+        setSaveError('');
 
         addAutomation({
             customerId: customerData.customerId,
@@ -84,6 +100,7 @@ const Automations = () => {
         });
 
         setSaved(true);
+        showToast({ title: 'Automation saved', description: 'New reminder rule has been added.', variant: 'success' });
         setTimeout(() => setSaved(false), 2000);
     };
 
@@ -237,6 +254,9 @@ const Automations = () => {
                             >
                                 {saved ? <><Check className="w-5 h-5" /> Saved Successfully</> : <><Plus className="w-5 h-5" /> Add Automation Rule</>}
                             </button>
+                            {saveError && (
+                                <p className="text-xs text-red-600 mt-2">{saveError}</p>
+                            )}
                         </div>
 
                     </div>

@@ -140,6 +140,8 @@ const SupportTicketDetails = () => {
     
     // Safely extract ticket properties
     const md = ticket?.metadata || {};
+    const riskFlags = Array.isArray(md?.riskFlags) ? md.riskFlags : [];
+    const isLegalRisk = riskFlags.includes('legal_threat') || md?.escalation === 'human_immediate';
     const customerName = md.customerName || 'Unknown Customer';
     const customerEmail = md.customerEmail || `${customerName.toLowerCase().replace(/\s+/g, '.')}@example.com`;
     const channel = md.channel || 'Email';
@@ -188,6 +190,15 @@ const SupportTicketDetails = () => {
                     </span>
                 </div>
             </div>
+            {isLegalRisk && (
+                <div className="bg-red-50 border border-red-200 rounded-lg px-4 py-3 flex items-start gap-2">
+                    <AlertCircle className="w-4 h-4 text-red-600 mt-0.5 shrink-0" />
+                    <div>
+                        <p className="text-sm font-semibold text-red-800">Legal-risk detected: immediate human handling required</p>
+                        <p className="text-xs text-red-700 mt-1">Automation should stay bypassed until the assigned human agent closes this escalation.</p>
+                    </div>
+                </div>
+            )}
 
             {/* Main Content Grid */}
             <div className="grid grid-cols-10 gap-6">

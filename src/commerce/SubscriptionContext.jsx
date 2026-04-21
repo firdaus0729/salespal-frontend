@@ -22,12 +22,29 @@ import { MODULES } from './commerce.config';
 const SubscriptionContext = createContext();
 const DEV_DISABLE_SUBSCRIPTIONS = String(import.meta.env.VITE_DISABLE_SUBSCRIPTIONS || '').toLowerCase() === 'true';
 
+const MODULE_ALIASES = {
+    postsale: 'post-sales',
+    'post-sale': 'post-sales',
+    postSale: 'post-sales',
+    postsales: 'post-sales',
+    salespal360: 'salespal-360',
+    bundle: 'salespal-360',
+};
+
+const normalizeModuleKey = (raw) => {
+    const v = String(raw || '').trim();
+    if (!v) return '';
+    const low = v.toLowerCase();
+    return MODULE_ALIASES[low] || MODULE_ALIASES[v] || low;
+};
+
 function buildDevSubscriptions() {
     const map = {};
     Object.keys(MODULES).forEach((moduleKey) => {
+        const normalized = normalizeModuleKey(moduleKey);
         map[moduleKey] = {
             id: `dev-${moduleKey}`,
-            module: moduleKey,
+            module: normalized,
             plan: 'dev-unlocked',
             status: 'active',
             active: true,
@@ -78,9 +95,10 @@ export const SubscriptionProvider = ({ children }) => {
             // Build subscriptions map keyed by module
             const subMap = {};
             (subRes || []).forEach(row => {
-                subMap[row.module] = {
+                const key = normalizeModuleKey(row.module);
+                subMap[key] = {
                     id: row.id,
-                    module: row.module,
+                    module: key,
                     plan: row.plan,
                     status: row.status,
                     active: row.status === 'active' || row.status === 'trial',
@@ -120,10 +138,10 @@ export const SubscriptionProvider = ({ children }) => {
         } else {
             const moduleKey = input.module || input.moduleId;
             const productId = input.productId || input.id;
-            if (productId === 'salespal-360' || input.type === 'bundle') {
-                moduleIds.push('marketing', 'sales', 'postSale', 'support', 'salespal360');
+                if (normalizeModuleKey(productId) === 'salespal-360' || input.type === 'bundle') {
+                    moduleIds.push('marketing', 'sales', 'post-sales', 'support', 'salespal-360');
             } else if (moduleKey) {
-                moduleIds.push(moduleKey);
+                    moduleIds.push(normalizeModuleKey(moduleKey));
             }
         }
 
@@ -131,7 +149,7 @@ export const SubscriptionProvider = ({ children }) => {
 
         for (const moduleId of moduleIds) {
             try {
-                await api.post('/billing/subscriptions/activate', { moduleId });
+                await api.post('/billing/subscriptions/activate', { module: normalizeModuleKey(moduleId) });
             } catch (error) {
                 console.error(`Failed to activate subscription for ${moduleId}:`, error);
             }
@@ -175,11 +193,13 @@ export const SubscriptionProvider = ({ children }) => {
 
     const isModuleActive = useCallback((moduleId) => {
         if (DEV_DISABLE_SUBSCRIPTIONS) return true;
-        return !!subscriptions[moduleId]?.active;
+        const key = normalizeModuleKey(moduleId);
+        return !!subscriptions[key]?.active || !!subscriptions['salespal-360']?.active;
     }, [subscriptions]);
 
     const getSubscription = useCallback((moduleId) => {
-        return subscriptions[moduleId] || null;
+        const key = normalizeModuleKey(moduleId);
+        return subscriptions[key] || subscriptions['salespal-360'] || null;
     }, [subscriptions]);
 
     // ─── Credit management ───

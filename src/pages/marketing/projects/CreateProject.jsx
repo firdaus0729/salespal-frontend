@@ -24,12 +24,15 @@ function normalizeWebsiteUrl(raw) {
 
 export default function CreateProject() {
     const navigate = useNavigate();
-    const { createProject } = useMarketing();
+    const { createProject, ingestProjectKnowledge } = useMarketing();
     const [formData, setFormData] = useState({
         name: '',
         industry: '',
         customIndustry: '',
-        website: ''
+        website: '',
+        businessDescription: '',
+        pdfFile: null,
+        logoFile: null,
     });
     const [urlError, setUrlError] = useState('');
     const [submitError, setSubmitError] = useState('');
@@ -63,6 +66,12 @@ export default function CreateProject() {
         try {
             const newProject = await createProject(dataToSubmit);
             if (!newProject?.id) throw new Error('Project could not be created.');
+            await ingestProjectKnowledge(newProject.id, {
+                websiteUrl: processedWebsite,
+                businessDescription: formData.businessDescription,
+                pdfFile: formData.pdfFile,
+                logoFile: formData.logoFile,
+            });
             navigate(`/marketing/projects/${newProject.id}`);
         } catch (error) {
             setSubmitError(error?.message || 'Failed to create project. Please try again.');
@@ -133,6 +142,33 @@ export default function CreateProject() {
                         required
                         error={urlError}
                     />
+                    <Input
+                        type="text"
+                        label="Business Description"
+                        value={formData.businessDescription}
+                        onChange={(e) => setFormData(prev => ({ ...prev, businessDescription: e.target.value }))}
+                        placeholder="Briefly describe your business, products, and audience"
+                    />
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-2">Upload PDF (optional)</label>
+                            <input
+                                type="file"
+                                accept=".pdf,application/pdf"
+                                onChange={(e) => setFormData(prev => ({ ...prev, pdfFile: e.target.files?.[0] || null }))}
+                                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
+                            />
+                        </div>
+                        <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-2">Upload Logo (optional)</label>
+                            <input
+                                type="file"
+                                accept="image/*"
+                                onChange={(e) => setFormData(prev => ({ ...prev, logoFile: e.target.files?.[0] || null }))}
+                                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
+                            />
+                        </div>
+                    </div>
                     {submitError && (
                         <p className="text-sm text-red-600">{submitError}</p>
                     )}

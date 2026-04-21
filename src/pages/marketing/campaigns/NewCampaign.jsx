@@ -289,7 +289,7 @@ const NewCampaign = () => {
                 // Move Wizard Step to show Loading Skeleton immediately
                 await setDraftStepIndex(1);
 
-                api.post('/api/marketing/ai-analyze', formData)
+                api.post('/marketing/ai-analyze', formData)
                     .then(async (response) => {
                         console.log('[NewCampaign] Raw API response:', response);
                         console.log('[NewCampaign] response.data keys:', Object.keys(response?.data || {}));

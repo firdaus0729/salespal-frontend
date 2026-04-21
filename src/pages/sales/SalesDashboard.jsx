@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useSales } from '../../context/SalesContext';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -8,6 +8,8 @@ import {
     Calendar, FileText, Mic, BarChart3, Volume2,
     Send, Check, TrendingUp, Target, Award, Bell
 } from 'lucide-react';
+import api from '../../lib/api';
+import { useToast } from '../../components/ui/Toast';
 import {
     PieChart, Pie, Cell, Tooltip as RechartsTooltip,
     ResponsiveContainer, Legend
@@ -87,9 +89,38 @@ const FeedItem = ({ icon: Icon, iconColor, text, time, idx }) => (
 const SalesDashboard = () => {
     const { leads, addActionToLead } = useSales();
     const navigate = useNavigate();
+    const { showToast } = useToast();
     const [actionModal, setActionModal] = useState(null);
+    const [ownerSummary, setOwnerSummary] = useState({ summary: { totalCalls: 0, connected: 0, scheduledMeetings: 0 }, hotAlerts: [] });
+    const [ownerSummaryState, setOwnerSummaryState] = useState({ loading: true, error: '' });
 
     const openModal = (type, lead) => setActionModal({ type, lead });
+
+    useEffect(() => {
+        let mounted = true;
+        api.get('/ai/voice/owner-summary')
+            .then((data) => {
+                if (!mounted) return;
+                setOwnerSummary({
+                    summary: data?.summary || { totalCalls: 0, connected: 0, scheduledMeetings: 0 },
+                    hotAlerts: Array.isArray(data?.hotAlerts) ? data.hotAlerts : [],
+                });
+                setOwnerSummaryState({ loading: false, error: '' });
+            })
+            .catch(() => {
+                if (!mounted) return;
+                setOwnerSummary({ summary: { totalCalls: 0, connected: 0, scheduledMeetings: 0 }, hotAlerts: [] });
+                setOwnerSummaryState({ loading: false, error: 'Unable to load owner voice summary right now.' });
+                showToast({
+                    title: 'Owner summary unavailable',
+                    description: 'Could not load voice owner summary. Showing default values.',
+                    variant: 'warning',
+                });
+            });
+        return () => {
+            mounted = false;
+        };
+    }, [showToast]);
 
     /* ── Metrics ── */
     const metrics = useMemo(() => {
@@ -316,6 +347,24 @@ const SalesDashboard = () => {
             </div>
 
             {/* ── SECTION 2: HOT LEAD ALERT BAR ── */}
+            {ownerSummary.hotAlerts.length > 0 && (
+                <div className="bg-purple-50 border border-purple-200 rounded-xl p-4 mb-6">
+                    <div className="flex items-center justify-between gap-2">
+                        <h2 className="text-sm font-bold text-purple-800 uppercase tracking-wide">Voice Escalation Alerts</h2>
+                        <span className="text-xs font-bold text-purple-700 bg-purple-100 px-2 py-0.5 rounded-full">
+                            {ownerSummary.hotAlerts.length} hot
+                        </span>
+                    </div>
+                    <div className="mt-3 grid grid-cols-1 md:grid-cols-3 gap-2">
+                        {ownerSummary.hotAlerts.slice(0, 3).map((alert, idx) => (
+                            <div key={alert.conversationId || idx} className="bg-white border border-purple-100 rounded-lg p-3">
+                                <p className="text-xs font-semibold text-gray-900 truncate">{alert.payload?.contactName || 'Escalated voice lead'}</p>
+                                <p className="text-[11px] text-gray-500 mt-1">{relTime(alert.createdAt)}</p>
+                            </div>
+                        ))}
+                    </div>
+                </div>
+            )}
             {hotAlertLeads.length > 0 && (
                 <div className="bg-gradient-to-r from-red-50 to-orange-50 border border-red-200 rounded-xl p-4 mb-6">
                     <div className="flex items-center gap-2 mb-3">
@@ -438,6 +487,26 @@ const SalesDashboard = () => {
                     </button>
                 </div>
             </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+                <div className="bg-white border border-gray-200 rounded-xl p-4">
+                    <p className="text-xs text-gray-500 uppercase tracking-wide font-semibold">Voice Calls Today</p>
+                    <p className="text-2xl font-bold text-gray-900 mt-2">{ownerSummaryState.loading ? '—' : (ownerSummary.summary.totalCalls || 0)}</p>
+                </div>
+                <div className="bg-white border border-gray-200 rounded-xl p-4">
+                    <p className="text-xs text-gray-500 uppercase tracking-wide font-semibold">Connected Calls</p>
+                    <p className="text-2xl font-bold text-indigo-700 mt-2">{ownerSummaryState.loading ? '—' : (ownerSummary.summary.connected || 0)}</p>
+                </div>
+                <div className="bg-white border border-gray-200 rounded-xl p-4">
+                    <p className="text-xs text-gray-500 uppercase tracking-wide font-semibold">Meetings Scheduled</p>
+                    <p className="text-2xl font-bold text-emerald-700 mt-2">{ownerSummaryState.loading ? '—' : (ownerSummary.summary.scheduledMeetings || 0)}</p>
+                </div>
+            </div>
+            {ownerSummaryState.error && (
+                <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 mb-6">
+                    {ownerSummaryState.error}
+                </p>
+            )}
 
             {/* ── SECTION 4: AI LEAD SCORING ── */}
             <div className="mb-6">

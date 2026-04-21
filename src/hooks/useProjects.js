@@ -99,6 +99,31 @@ export function useProjects() {
         return projects.find(p => p.id === id) || null;
     };
 
+    const ingestProjectKnowledge = async (projectId, ingestData) => {
+        try {
+            const formData = new FormData();
+            if (ingestData?.websiteUrl) formData.append('websiteUrl', ingestData.websiteUrl);
+            if (ingestData?.businessDescription) formData.append('businessDescription', ingestData.businessDescription);
+            if (ingestData?.pdfFile) formData.append('pdf', ingestData.pdfFile);
+            if (ingestData?.logoFile) formData.append('logo', ingestData.logoFile);
+            const data = await api.post(`/projects/${projectId}/ingest`, formData);
+            return { data, error: null };
+        } catch (err) {
+            console.error('Error ingesting project knowledge:', err);
+            return { data: null, error: err.message };
+        }
+    };
+
+    const getProjectKnowledgeContext = async (projectId, q, k = 6) => {
+        try {
+            const data = await api.post(`/projects/${projectId}/context?k=${k}`, { q });
+            return { data, error: null };
+        } catch (err) {
+            console.error('Error fetching project context:', err);
+            return { data: null, error: err.message };
+        }
+    };
+
     return {
         projects,
         loading,
@@ -107,6 +132,8 @@ export function useProjects() {
         updateProject,
         archiveProject,
         getProjectById,
+        ingestProjectKnowledge,
+        getProjectKnowledgeContext,
         refetch: fetchProjects
     };
 }

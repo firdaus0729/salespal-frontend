@@ -8,13 +8,14 @@ import Badge from '../../../components/ui/Badge';
 
 const SocialList = ({ status, onNavigate }) => {
     const navigate = useNavigate();
-    const { socialPosts, deleteSocialPost, updateSocialPost, addSocialPost } = useMarketing();
+    const { socialPosts, deleteSocialPost, updateSocialPost, addSocialPost, approveSocialPost, publishSocialPost } = useMarketing();
 
     // Use onNavigate prop if provided (state-based), otherwise use router
     const goTo = (tab) => onNavigate ? onNavigate(tab) : navigate(`/marketing/social/${tab}`);
 
     const posts = socialPosts.filter(p => {
         if (status === 'drafts') return p.status === 'draft' || !p.status;
+        if (status === 'scheduled') return p.status === 'scheduled' || p.status === 'approved';
         return p.status === status;
     });
 
@@ -55,6 +56,15 @@ const SocialList = ({ status, onNavigate }) => {
                         <Button
                             variant="ghost"
                             size="sm"
+                            onClick={() => approveSocialPost(post.id)}
+                            className="text-gray-500 hover:text-emerald-600"
+                            title="Approve"
+                        >
+                            <Send className="w-4 h-4" />
+                        </Button>
+                        <Button
+                            variant="ghost"
+                            size="sm"
                             onClick={() => goTo('create')}
                             className="text-gray-500 hover:text-primary"
                         >
@@ -75,6 +85,15 @@ const SocialList = ({ status, onNavigate }) => {
             case 'scheduled':
                 return (
                     <>
+                        <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => publishSocialPost(post.id)}
+                            className="text-gray-500 hover:text-emerald-600"
+                            title="Publish Now"
+                        >
+                            <Send className="w-4 h-4" />
+                        </Button>
                         <Button
                             variant="ghost"
                             size="sm"

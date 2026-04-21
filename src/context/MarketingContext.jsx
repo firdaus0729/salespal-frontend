@@ -31,6 +31,8 @@ export const MarketingProvider = ({ children }) => {
         createProject: _createProject,
         updateProject: _updateProject,
         archiveProject,
+        ingestProjectKnowledge,
+        getProjectKnowledgeContext,
     } = useProjects();
 
     // selectedProjectId stays local — threaded into campaign and social hooks
@@ -93,6 +95,8 @@ export const MarketingProvider = ({ children }) => {
         addSocialPost,
         updateSocialPost,
         deleteSocialPost,
+        approveSocialPost,
+        publishSocialPost,
     } = useSocialContext(selectedProjectId);
 
     // ─── Campaign Draft Wizard ────────────────────────────────────────────────────
@@ -125,6 +129,8 @@ export const MarketingProvider = ({ children }) => {
         updateProject,
         deleteProject,
         getProjectById,
+        ingestProjectKnowledge,
+        getProjectKnowledgeContext,
 
         // Campaigns
         campaigns,
@@ -142,6 +148,8 @@ export const MarketingProvider = ({ children }) => {
         addSocialPost,
         updateSocialPost,
         deleteSocialPost,
+        approveSocialPost,
+        publishSocialPost,
 
         // Compare Panel
         compareMode,

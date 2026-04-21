@@ -19,7 +19,7 @@ export function useSocialContext(selectedProjectId) {
         if (!orgId) { setSocialPosts([]); setSocialPostsLoading(false); return; }
         setSocialPostsLoading(true);
         try {
-            const data = await api.get('/social/posts');
+            const data = await api.get('/marketing/social-studio/posts');
             setSocialPosts(data || []);
         } catch (err) {
             console.error('Failed to fetch posts:', err);
@@ -38,9 +38,9 @@ export function useSocialContext(selectedProjectId) {
         setSocialPosts(prev => [optimistic, ...prev]);
 
         try {
-            const data = await api.post('/social/posts', {
+            const data = await api.post('/marketing/social-studio/posts', {
                 projectId: selectedProjectId || null,
-                platform: Array.isArray(post.platforms) && post.platforms.length > 0 ? String(post.platforms[0]).toLowerCase() : null,
+                platform: Array.isArray(post.platforms) && post.platforms.length > 0 ? String(post.platforms[0]).toLowerCase() : (post.platform || null),
                 content: post.content,
                 postType: post.type || post.post_type || 'image',
                 status: post.status || 'draft',
@@ -66,7 +66,7 @@ export function useSocialContext(selectedProjectId) {
         // Optimistic removal
         setSocialPosts(prev => prev.filter(p => p.id !== postId));
         try {
-            await api.delete(`/social/posts/${postId}`);
+            await api.delete(`/marketing/social-studio/posts/${postId}`);
         } catch (err) {
             console.error('Failed to delete post:', err);
             // Rollback: refetch on failure
@@ -82,12 +82,34 @@ export function useSocialContext(selectedProjectId) {
             if (payload.scheduled_for) { payload.scheduledFor = payload.scheduled_for; delete payload.scheduled_for; }
             if (payload.media_urls) { payload.mediaUrls = payload.media_urls; delete payload.media_urls; }
 
-            const data = await api.put(`/social/posts/${postId}`, payload);
+            const data = await api.put(`/marketing/social-studio/posts/${postId}`, payload);
             if (data) setSocialPosts(prev => prev.map(p => p.id === postId ? data : p));
         } catch (err) {
             console.error('Failed to update post:', err);
             // Rollback by refetching
             fetchSocialPosts();
+        }
+    };
+
+    const approveSocialPost = async (postId) => {
+        try {
+            const data = await api.post(`/marketing/social-studio/posts/${postId}/approve`, {});
+            if (data) setSocialPosts(prev => prev.map(p => p.id === postId ? data : p));
+            return data;
+        } catch (err) {
+            console.error('Failed to approve social post:', err);
+            return null;
+        }
+    };
+
+    const publishSocialPost = async (postId) => {
+        try {
+            const data = await api.post(`/marketing/social-studio/posts/${postId}/publish`, {});
+            if (data) setSocialPosts(prev => prev.map(p => p.id === postId ? data : p));
+            return data;
+        } catch (err) {
+            console.error('Failed to publish social post:', err);
+            return null;
         }
     };
 
@@ -97,5 +119,7 @@ export function useSocialContext(selectedProjectId) {
         addSocialPost,
         updateSocialPost,
         deleteSocialPost,
+        approveSocialPost,
+        publishSocialPost,
     };
 }
