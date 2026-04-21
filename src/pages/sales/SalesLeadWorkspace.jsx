@@ -749,7 +749,7 @@ const SalesLeadWorkspace = () => {
                 history: priorHistory,
                 leadPreferredLocale: lead.preferredLocale || 'hing',
                 leadTimezone: lead.timezone || undefined,
-                message: `Lead name: ${lead.name}\nTheir latest message: ${text}\nWrite one concise WhatsApp reply as the sales rep (no email-style sign-off). One message only. Match the language of their latest message.`,
+                message: `Lead name: ${lead.name}\nTheir latest message (you MUST write your entire reply in the same language as this message — English if they wrote English, Hindi if they wrote Hindi, etc.):\n${text}\nWrite one concise WhatsApp reply as the sales rep (no email-style sign-off). One message only.`,
             });
             const aiReply = ai?.response ? sanitizeWhatsappAiReply(ai.response) : null;
             if (aiReply) {
