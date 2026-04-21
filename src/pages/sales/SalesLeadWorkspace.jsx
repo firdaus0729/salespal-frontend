@@ -198,6 +198,10 @@ const SalesLeadWorkspace = () => {
     const [isWaAiTyping, setIsWaAiTyping] = useState(false);
     const [liveCallTranscript, setLiveCallTranscript] = useState([]);
     const waTypingTimeoutRef = useRef(null);
+    const waNoReplyTimerRef = useRef(null);
+    const callNoAnswerTimerRef = useRef(null);
+    const hasLoggedVoiceConnectedRef = useRef(false);
+    const isProcessingTurnRef = useRef(false);
     const callStartedAtRef = useRef(null);
     const mediaRecorderRef = useRef(null);
     const recordingChunksRef = useRef([]);
