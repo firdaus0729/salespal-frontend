@@ -997,20 +997,7 @@ const SalesLeadWorkspace = () => {
 
             const inferredCallScheduleAt = parseCallRequestScheduleAt(text);
             if (inferredCallScheduleAt && !isScheduleWithinCallWindow(inferredCallScheduleAt, lead.timezone || 'Asia/Kolkata')) {
-                const requestedAt = new Date(inferredCallScheduleAt).toLocaleString('en-US', { timeZone: lead.timezone || 'Asia/Kolkata' });
-                const suggestedAt = nextCallWindowSuggestion(inferredCallScheduleAt, lead.timezone || 'Asia/Kolkata')
-                    .toLocaleString('en-US', { timeZone: lead.timezone || 'Asia/Kolkata' });
-                setIsWaAiTyping(true);
-                clearWaTypingTimer();
-                const blockedReply = `Requested call time ${requestedAt} is outside call hours (9:00 AM - 9:00 PM). Next available slot: ${suggestedAt}.`;
-                waTypingTimeoutRef.current = setTimeout(() => {
-                    addActionToLead(lead.id, 'whatsapp', 'AI WhatsApp follow-up', blockedReply, {
-                        sender: 'AI',
-                        outcome: 'automation_outside_call_window',
-                    });
-                    setIsWaAiTyping(false);
-                    waTypingTimeoutRef.current = null;
-                }, 900);
+                await refreshLeadActivities(lead.id);
                 setWaText('');
                 return;
             }
