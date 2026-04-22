@@ -297,16 +297,28 @@ const StepAIAnalysis = ({ onComplete, onBack, data, isAnalyzing }) => {
                     </div>
 
                     {/* Right insight box */}
-                    <div className="bg-linear-to-br from-indigo-50/80 to-purple-50/50 border border-indigo-100/60 rounded-xl p-3.5 w-full md:w-80 shrink-0 flex items-start gap-3 z-10 shadow-[0_4px_20px_-4px_rgba(99,102,241,0.15)] ring-1 ring-white/60">
-                         <div className="w-6 h-6 bg-white rounded-full flex items-center justify-center shrink-0 shadow-sm border border-indigo-50">
-                             <Sparkles className="w-3.5 h-3.5 text-indigo-500" />
+                    <div className={`rounded-xl p-3.5 w-full md:w-80 shrink-0 flex items-start gap-3 z-10 ring-1 ring-white/60 border shadow-[0_4px_20px_-4px_rgba(99,102,241,0.15)] ${
+                        analysis.error
+                            ? 'bg-linear-to-br from-amber-50/90 to-orange-50/50 border-amber-200/70'
+                            : 'bg-linear-to-br from-indigo-50/80 to-purple-50/50 border-indigo-100/60'
+                    }`}>
+                         <div className={`w-6 h-6 bg-white rounded-full flex items-center justify-center shrink-0 shadow-sm border ${
+                             analysis.error ? 'border-amber-100' : 'border-indigo-50'
+                         }`}>
+                             <Sparkles className={`w-3.5 h-3.5 ${analysis.error ? 'text-amber-600' : 'text-indigo-500'}`} />
                          </div>
                          <div>
-                             <h4 className="text-[12px] font-semibold text-indigo-900 mb-1 uppercase tracking-wider flex items-center gap-2 leading-[1.3]">
-                                 AI Analysis Ready
+                             <h4 className={`text-[12px] font-semibold mb-1 uppercase tracking-wider flex items-center gap-2 leading-[1.3] ${
+                                 analysis.error ? 'text-amber-950' : 'text-indigo-900'
+                             }`}>
+                                 {analysis.error ? 'Limited AI output' : 'AI analysis ready'}
                              </h4>
-                             <p className="text-[13px] text-indigo-800/80 font-normal leading-relaxed">
-                                 Your business profile has been analyzed. High-impact marketing opportunities identified.
+                             <p className={`text-[13px] font-normal leading-relaxed ${
+                                 analysis.error ? 'text-amber-900/85' : 'text-indigo-800/80'
+                             }`}>
+                                 {analysis.error
+                                     ? 'Full AI output was not available. The brief below blends safe placeholders with anything we could pull from your site or uploaded files. Your admin can enable the backend AI key (OpenAI or Gemini) for richer analysis.'
+                                     : 'Your business profile has been analyzed. High-impact marketing opportunities identified.'}
                              </p>
                          </div>
                     </div>
