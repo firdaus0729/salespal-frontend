@@ -14,6 +14,7 @@ const MetaIntegration = () => {
     const isConnected = integrations.meta?.connected;
 
     const [loading, setLoading] = useState(false);
+    const [error, setError] = useState(null);
 
     // Health Checklist — computed from real connection state
     const healthChecks = [
@@ -24,8 +25,13 @@ const MetaIntegration = () => {
 
     const handleConnect = async () => {
         setLoading(true);
-        await connectIntegration('meta');
-        setLoading(false);
+        setError(null);
+        try {
+            await connectIntegration('meta');
+        } catch (err) {
+            setError(err?.message || 'Failed to start Meta OAuth flow.');
+            setLoading(false);
+        }
     };
 
     const handleDisconnect = async () => {
@@ -71,6 +77,12 @@ const MetaIntegration = () => {
                                 Connect your Meta Ads account to start creating and managing campaigns through SalesPal.
                             </p>
                         </div>
+                        {error && (
+                            <div className="flex items-start gap-2 bg-red-50 border border-red-200 text-red-700 text-sm px-4 py-3 rounded-lg text-left">
+                                <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+                                <span>{error}</span>
+                            </div>
+                        )}
                         <Button
                             onClick={handleConnect}
                             isLoading={loading}

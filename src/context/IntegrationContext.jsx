@@ -17,6 +17,7 @@ const PLATFORM_DEFAULTS = {
     instagram: { name: 'Instagram', description: 'Organic posts and stories' },
     linkedin: { name: 'LinkedIn Ads', description: 'B2B advertising and campaigns' }
 };
+const OAUTH_PLATFORMS = new Set(['meta', 'google', 'instagram', 'linkedin']);
 
 export const IntegrationProvider = ({ children }) => {
     const { user } = useAuth();
@@ -81,6 +82,15 @@ export const IntegrationProvider = ({ children }) => {
     // Connect platform
     const connectIntegration = useCallback(async (platformId, authCode = null) => {
         if (!user) return;
+
+        if (!authCode && OAUTH_PLATFORMS.has(String(platformId || '').toLowerCase())) {
+            const data = await api.get(`/integrations/${platformId}/auth-url`);
+            if (!data?.authUrl) {
+                throw new Error(`No OAuth URL returned for ${platformId}.`);
+            }
+            window.location.href = data.authUrl;
+            return { redirected: true };
+        }
 
         // Optimistic update
         setIntegrations(prev => ({

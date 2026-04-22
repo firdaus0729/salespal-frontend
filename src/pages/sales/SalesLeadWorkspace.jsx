@@ -907,6 +907,7 @@ const SalesLeadWorkspace = () => {
                 locale: lead.preferredLocale || 'hing',
                 openerContext,
             });
+            const telephony = response?.telephony || null;
             if (voiceCallDismissedRef.current) {
                 return;
             }
@@ -955,8 +956,29 @@ const SalesLeadWorkspace = () => {
                 'call',
                 'AI Voice Call Started',
                 response?.assistant_reply || 'AI call started for this lead.',
-                { outcome: 'Queued', duration: '0m 00s' }
+                {
+                    outcome: 'Queued',
+                    duration: '0m 00s',
+                    telephony,
+                    provider: telephony?.provider || null,
+                    providerCallId: telephony?.providerCallId || null,
+                }
             );
+            if (telephony?.enabled && telephony?.accepted) {
+                showToast({
+                    title: 'Tata call initiated',
+                    description: telephony?.providerCallId
+                        ? `Provider call ID: ${telephony.providerCallId}`
+                        : 'Outbound call request accepted by Tata.',
+                    variant: 'success',
+                });
+            } else if (!telephony?.enabled) {
+                showToast({
+                    title: 'Telephony disabled',
+                    description: 'Running in local voice simulation mode. Enable Tata in backend .env for real calls.',
+                    variant: 'warning',
+                });
+            }
         } catch (err) {
             if (!voiceCallDismissedRef.current) {
                 callActiveRef.current = false;
