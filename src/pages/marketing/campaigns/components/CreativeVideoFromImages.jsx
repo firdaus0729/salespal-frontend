@@ -60,7 +60,12 @@ export default function CreativeVideoFromImages({
               const s = await api.get(`/ai/video/jobs/${jobId}`);
               const state = String(s?.status || '').toLowerCase();
               if (state === 'completed' || state === 'done') {
-                remoteVideo = s?.video_url || s?.result?.video_url || s?.result?.videoUrl || null;
+                remoteVideo =
+                  s?.video_url ||
+                  s?.result?.video_url ||
+                  s?.result?.videoUrl ||
+                  s?.result?.clips?.[0]?.videoUrl ||
+                  null;
                 break;
               }
               if (state === 'failed' || state === 'error') {

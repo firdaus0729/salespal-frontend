@@ -1511,7 +1511,7 @@ const StepAdCreation = ({ onComplete, onUpdate, onBack, data }) => {
                         <div>
                             <label className="text-[13px] font-medium text-gray-800 mb-2.5 block">Video duration</label>
                             <div className="flex items-center gap-2 flex-wrap">
-                                {[8, 12, 15, 20, 30].map((sec) => (
+                                {[8, 12, 15, 20, 30, 45, 60, 90, 120].map((sec) => (
                                     <button
                                         key={sec}
                                         type="button"
