@@ -10,6 +10,7 @@ export default function CreativeVideoFromImages({
   imageUrls,
   durationSec = 12,
   videoPrompt = '',
+  requireAiVideo = false,
   className = '',
 }) {
   const key = useMemo(
@@ -51,7 +52,9 @@ export default function CreativeVideoFromImages({
             locale: 'en',
             durationSec: Math.max(4, Number(durationSec) || 12),
             aspectRatio: '9:16',
-            referenceImageUrl: urls[0] || '',
+            // Do not anchor to a single still image for "video ads";
+            // this often leads to static image-to-video behavior.
+            referenceImageUrl: requireAiVideo ? '' : (urls[0] || ''),
           });
           const jobId = job?.job_id || job?.id;
           if (jobId) {
@@ -87,6 +90,10 @@ export default function CreativeVideoFromImages({
           return;
         }
 
+        if (requireAiVideo) {
+          throw new Error('AI video generation failed. Configure video provider/model and retry.');
+        }
+
         objectUrl = await createSlideshowVideo(urls, {
           totalDurationMs: Math.max(4, Number(durationSec) || 12) * 1000,
           durationPerSlideMs: 2000,
@@ -110,7 +117,7 @@ export default function CreativeVideoFromImages({
       cancelled = true;
       if (objectUrl) URL.revokeObjectURL(objectUrl);
     };
-  }, [key]);
+  }, [key, requireAiVideo]);
 
   if (!imageUrls?.length) {
     return (
