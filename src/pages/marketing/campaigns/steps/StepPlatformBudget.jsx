@@ -5,6 +5,7 @@ import {
 } from 'lucide-react';
 import { Facebook, Linkedin, Instagram, Twitter } from 'lucide-react';
 import StepNavigation from '../components/StepNavigation';
+import GeneratedCreativesPanel from '../components/GeneratedCreativesPanel';
 import { usePreferences } from '../../../../context/PreferencesContext';
 
 // ─── Brand Icons ─────────────────────────────────────────────────────────────
@@ -626,6 +627,12 @@ const StepPlatformBudget = ({ onComplete, onUpdate, onBack, data }) => {
                 {/* ── RIGHT COLUMN: Summary card ─────────────────────────────── */}
                 <div className="lg:pl-8 lg:border-l border-gray-100">
                     <div className="sticky top-6 space-y-5">
+                        {data?.adSettings?.chosenCampaign && (
+                            <GeneratedCreativesPanel
+                                chosenCampaign={data.adSettings.chosenCampaign}
+                                selectedAdFormat={data.adSettings.selectedAdFormat || 'image'}
+                            />
+                        )}
 
                         {/* Estimated reach card */}
                         <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-6">

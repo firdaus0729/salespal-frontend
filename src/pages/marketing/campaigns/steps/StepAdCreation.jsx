@@ -6,6 +6,7 @@ import {
     Heart, MessageCircle, Calendar
 } from 'lucide-react';
 import StepNavigation from '../components/StepNavigation';
+import GeneratedCreativesPanel from '../components/GeneratedCreativesPanel';
 import api from '../../../../lib/api';
 
 // ─── Brand Icons ─────────────────────────────────────────────────────────────
@@ -570,10 +571,11 @@ const StepAdCreation = ({ onComplete, onUpdate, onBack, data }) => {
                     platforms: selectedPlatforms,
                     campaigns: selectedCampaigns.map(i => campaigns[i]).filter(Boolean),
                     generatedAds,
+                    selectedAdFormat,
                 }
             });
         }
-    }, [selectedCampaigns, selectedPlatforms, campaigns, generatedAds, onUpdate]);
+    }, [selectedCampaigns, selectedPlatforms, campaigns, generatedAds, selectedAdFormat, onUpdate]);
 
     // ── Handlers ─────────────────────────────────────────────────────────────
     const updateCampaignField = (index, field, value) => {
@@ -609,32 +611,43 @@ const StepAdCreation = ({ onComplete, onUpdate, onBack, data }) => {
         setSelectedCampaign(null);
 
         try {
+            const selectedCampaignPayload = selectedCampaigns.map((i) => campaigns[i]).filter(Boolean);
             const response = await api.post('/api/marketing/generate-ads', {
                 analysisData: data?.analysisData || {},
                 platforms: selectedPlatforms,
                 numberOfImages: numberOfImages,
+                selectedCampaigns: selectedCampaignPayload,
+                selectedAdFormat,
+                carouselSlides: selectedAdFormat === 'carousel' || selectedAdFormat === 'video' ? 6 : undefined,
             });
 
-            const apiCampaigns = response?.data?.campaigns || response?.campaigns || [];
+            const payload = response?.data != null ? response.data : response;
+            const apiCampaigns = payload?.campaigns || [];
             console.log('[StepAdCreation] API returned', apiCampaigns.length, 'campaigns');
 
-            // Normalize — backend now returns imageUrl with each campaign
-            const normalized = apiCampaigns.map((c) => ({
-                ...c,
-                platform: mapPlatformName(c.platform),
-                campaignName: c.campaignName || c.campaignTitle || 'Campaign',
-                headlines: c.headlines || [],
-                descriptions: c.descriptions || [],
-                primaryText: c.primaryText || '',
-                targeting: {
-                    audience: c.targeting?.audience || 'General audience',
-                    interests: c.targeting?.interests || [],
-                    keywords: c.targeting?.keywords || [],
-                },
-                imageUrl: c.imageUrl || c.image || null,
-                images: c.images || [c.imageUrl || c.image].filter(Boolean),
-                activeImageIndex: 0,
-            }));
+            // Normalize — backend returns image / images / carouselImages
+            const normalized = apiCampaigns.map((c) => {
+                const imgs = (c.images && c.images.length ? c.images : null) ||
+                    (c.carouselImages && c.carouselImages.length ? c.carouselImages : null) ||
+                    [c.imageUrl || c.image].filter(Boolean);
+                return {
+                    ...c,
+                    platform: mapPlatformName(c.platform),
+                    campaignName: c.campaignName || c.campaignTitle || 'Campaign',
+                    headlines: c.headlines || [],
+                    descriptions: c.descriptions || [],
+                    primaryText: c.primaryText || '',
+                    targeting: {
+                        audience: c.targeting?.audience || 'General audience',
+                        interests: c.targeting?.interests || [],
+                        keywords: c.targeting?.keywords || [],
+                    },
+                    imageUrl: c.imageUrl || c.image || imgs[0] || null,
+                    images: imgs,
+                    carouselImages: c.carouselImages?.length ? c.carouselImages : imgs,
+                    activeImageIndex: 0,
+                };
+            });
 
             setGeneratedAds({ campaigns: normalized });
         } catch (error) {
@@ -663,6 +676,7 @@ const StepAdCreation = ({ onComplete, onUpdate, onBack, data }) => {
                     campaigns: selectedCampaigns.map(i => campaigns[i]).filter(Boolean),
                     generatedAds,
                     chosenCampaign: generatedAds.campaigns[selectedCampaign],
+                    selectedAdFormat,
                 }
             });
         }
@@ -794,7 +808,10 @@ const StepAdCreation = ({ onComplete, onUpdate, onBack, data }) => {
                         const isGoogle = campaign.platform === 'google';
                         const campaignName = campaign.campaignName || campaign.campaignTitle || 'Campaign';
                         const goal = campaign.goal || '';
-                        const allImages = campaign.images || [campaign.imageUrl || campaign.image].filter(Boolean);
+                        const allImages =
+                            (campaign.carouselImages?.length && campaign.carouselImages) ||
+                            campaign.images ||
+                            [campaign.imageUrl || campaign.image].filter(Boolean);
                         const activeIdx = campaign.activeImageIndex || 0;
                         const imageUrl = allImages[activeIdx] || null;
                         const description = campaign.primaryText || campaign.descriptions?.[0] || campaign.description || '';
@@ -993,6 +1010,21 @@ const StepAdCreation = ({ onComplete, onUpdate, onBack, data }) => {
                         );
                     })}
                 </div>
+
+                {selectedCampaign !== null && adCampaigns[selectedCampaign] && (
+                    <div className="mt-10 max-w-3xl mx-auto w-full">
+                        <h3 className="text-[16px] font-semibold text-gray-900 mb-2 text-center">
+                            Carousel &amp; video for your selection
+                        </h3>
+                        <p className="text-[13px] text-gray-500 text-center mb-4">
+                            Scroll the carousel slides and play the auto-built video before continuing.
+                        </p>
+                        <GeneratedCreativesPanel
+                            chosenCampaign={adCampaigns[selectedCampaign]}
+                            selectedAdFormat={selectedAdFormat}
+                        />
+                    </div>
+                )}
 
                 {/* Continue with Selected Campaign button */}
                 <div className="mt-8 flex flex-col items-center gap-3">
@@ -1427,8 +1459,17 @@ const StepAdCreation = ({ onComplete, onUpdate, onBack, data }) => {
                             ))}
                         </div>
                         <p className="text-[11px] text-gray-400 mt-1.5">
-                            {numberOfImages === 1 ? '1 image per campaign' : `${numberOfImages} images per campaign`}
-                            {numberOfImages >= 3 && ' — may take longer to generate'}
+                            {selectedAdFormat === 'carousel' || selectedAdFormat === 'video' ? (
+                                <>
+                                    Carousel &amp; video modes generate several slides per social campaign (Google capped at 2).
+                                    Generation can take a few minutes.
+                                </>
+                            ) : (
+                                <>
+                                    {numberOfImages === 1 ? '1 image per campaign' : `${numberOfImages} images per campaign`}
+                                    {numberOfImages >= 3 && ' — may take longer to generate'}
+                                </>
+                            )}
                         </p>
                     </div>
 
