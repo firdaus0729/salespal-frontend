@@ -659,7 +659,50 @@ const StepAdCreation = ({ onComplete, onUpdate, onBack, data }) => {
             const allAds = selectedCampaignData.flatMap(campaign =>
                 generateAdsForCampaign(campaign, selectedPlatforms, data)
             );
-            setGeneratedAds({ campaigns: allAds });
+
+            // Try to fetch real AI images even in fallback mode so the UI never shows empty creative cards.
+            const adsWithImages = await Promise.all(
+                allAds.map(async (ad) => {
+                    const normalizedPlatform = ad.platform === 'meta' ? 'Meta Ads' : ad.platform;
+                    const needsSlides = selectedAdFormat === 'carousel' || selectedAdFormat === 'video';
+                    const desiredCount = needsSlides ? 6 : Math.max(1, numberOfImages);
+                    const count = ad.platform === 'google' ? Math.min(desiredCount, 2) : desiredCount;
+                    const images = [];
+
+                    for (let i = 0; i < count; i++) {
+                        try {
+                            const imgRes = await api.post('/api/marketing/generate-ad-image', {
+                                businessOverview: data?.analysisData?.businessSummary || '',
+                                valueProposition: data?.analysisData?.keyDifferentiators?.join('. ') || '',
+                                targetAudience: data?.analysisData?.targetAudience || '',
+                                campaignName: ad.campaignTitle || ad.campaignName || 'Campaign',
+                                primaryText: ad.primaryText || ad.descriptions?.[0] || '',
+                                platform: normalizedPlatform,
+                                industry: data?.analysisData?.businessSignals?.industry || 'Business',
+                                logo: data?.analysisData?.logo || '',
+                            });
+                            const imgPayload = imgRes?.data != null ? imgRes.data : imgRes;
+                            const imgUrl = imgPayload?.imageUrl || imgPayload?.data?.imageUrl || null;
+                            if (imgUrl) images.push(imgUrl);
+                        } catch (imgErr) {
+                            console.warn('[StepAdCreation] fallback image generation failed for slide', i + 1, imgErr?.message || imgErr);
+                        }
+                    }
+
+                    const first = images[0] || null;
+                    return {
+                        ...ad,
+                        image: first,
+                        imageUrl: first,
+                        images,
+                        carouselImages: images,
+                        generatedAdFormat: selectedAdFormat,
+                        videoFromSlides: selectedAdFormat === 'video',
+                    };
+                })
+            );
+
+            setGeneratedAds({ campaigns: adsWithImages });
         } finally {
             setIsGenerating(false);
         }
