@@ -24,6 +24,7 @@ import {
 } from '../../utils/salesBotFlow';
 import { speechRecognitionLangForLocale } from '../../utils/localeOptions';
 import { playNotificationSound } from '../../utils/notificationSound';
+import { useProjects } from '../../hooks/useProjects';
 
 /* ─── Status config ─────────────────────────────────────────── */
 const STATUS_CONFIG = {
@@ -279,6 +280,7 @@ const SalesLeadWorkspace = () => {
         updateAutomationJobStatus,
     } = useSales();
     const { showToast } = useToast();
+    const { projects } = useProjects();
 
     const lead = useMemo(() => leads.find(l => l.id === id), [leads, id]);
     const aiPlaybook = useMemo(
@@ -309,6 +311,8 @@ const SalesLeadWorkspace = () => {
     const [isSpeakerMuted, setIsSpeakerMuted] = useState(false);
     const [isCallActive, setIsCallActive] = useState(false);
     const [voiceSession, setVoiceSession] = useState(null);
+    const [voiceProjectId, setVoiceProjectId] = useState('');
+    const [voiceAgentName, setVoiceAgentName] = useState('SalesPal AI');
     const speechRef = useRef(null);
     /** Live volume for current utterance (mute speaker must not cancel speech / onEnd) */
     const isSpeakerMutedRef = useRef(false);
@@ -370,6 +374,9 @@ const SalesLeadWorkspace = () => {
         if (type === 'call') {
             voiceCallDismissedRef.current = false;
             setAllowVoiceMic(false);
+            const leadProjectId = lead?.projectId || lead?.project_id || '';
+            setVoiceProjectId((prev) => prev || leadProjectId);
+            setVoiceAgentName((prev) => prev || 'SalesPal AI');
         }
         setModal(type);
         if (type !== 'call') {
@@ -490,10 +497,11 @@ const SalesLeadWorkspace = () => {
         setModal(null);
     };
 
-    const pushLiveTranscript = (speaker, text) => {
+    const pushLiveTranscript = (speaker, text, meta = null) => {
         const line = String(text || '').trim();
         if (!line) return;
-        setLiveCallTranscript((prev) => [...prev, { speaker, text: line }]);
+        const sourceLabel = meta?.sourceLabel ? String(meta.sourceLabel) : '';
+        setLiveCallTranscript((prev) => [...prev, { speaker, text: line, sourceLabel }]);
     };
 
     const startCallRecording = async () => {
@@ -765,7 +773,7 @@ const SalesLeadWorkspace = () => {
             const reply = turn?.assistant_reply ? String(turn.assistant_reply).trim() : '';
             if (reply && callActiveRef.current) {
                 addActionToLead(lead.id, 'call', 'AI Voice Reply', reply, { outcome: 'Responded' });
-                pushLiveTranscript('AI', reply);
+                pushLiveTranscript('AI', reply, { sourceLabel: turn?.fact_source?.label || '' });
                 speakText(reply, () => {
                     aiVoiceBusyRef.current = false;
                     if (callActiveRef.current) {
@@ -906,6 +914,8 @@ const SalesLeadWorkspace = () => {
                 name: lead.name,
                 locale: lead.preferredLocale || 'hing',
                 openerContext,
+                projectId: voiceProjectId || undefined,
+                agentName: String(voiceAgentName || '').trim() || 'SalesPal AI',
             });
             const telephony = response?.telephony || null;
             if (voiceCallDismissedRef.current) {
@@ -940,7 +950,7 @@ const SalesLeadWorkspace = () => {
             setAllowVoiceMic(false);
             const opener = response?.assistant_reply ? String(response.assistant_reply).trim() : '';
             if (opener) {
-                pushLiveTranscript('AI', opener);
+                pushLiveTranscript('AI', opener, { sourceLabel: voiceProjectId ? 'Project Knowledge (selected)' : '' });
                 speakText(opener, () => {
                     if (callActiveRef.current && !voiceCallDismissedRef.current) {
                         setAllowVoiceMic(true);
@@ -1397,6 +1407,35 @@ const SalesLeadWorkspace = () => {
                                     <h3 className="text-2xl font-bold">{lead.name}</h3>
                                     <p className="text-blue-200 text-sm mt-1 font-medium tracking-widest">{lead.phone}</p>
                                     <p className="text-blue-200/70 text-[10px] mt-1 px-2 max-w-xs">{callWindowLabel(lead.timezone)}</p>
+                                    {!isCallActive && (
+                                        <div className="mt-4 w-full max-w-sm rounded-xl bg-white/10 border border-white/10 p-3 text-left">
+                                            <label className="block text-[10px] uppercase tracking-wide text-blue-100/80 mb-1.5">Project Brain</label>
+                                            <select
+                                                value={voiceProjectId}
+                                                onChange={(e) => setVoiceProjectId(e.target.value)}
+                                                className="w-full bg-blue-950/70 border border-white/20 rounded-md px-2.5 py-2 text-xs text-white outline-none focus:border-emerald-300"
+                                            >
+                                                <option value="">No project selected</option>
+                                                {projects.map((p) => (
+                                                    <option key={p.id} value={p.id}>
+                                                        {p.name}
+                                                    </option>
+                                                ))}
+                                            </select>
+                                            <label className="block text-[10px] uppercase tracking-wide text-blue-100/80 mb-1.5 mt-3">Agent Name</label>
+                                            <input
+                                                type="text"
+                                                value={voiceAgentName}
+                                                onChange={(e) => setVoiceAgentName(String(e.target.value || '').slice(0, 40))}
+                                                placeholder="SalesPal AI"
+                                                maxLength={40}
+                                                className="w-full bg-blue-950/70 border border-white/20 rounded-md px-2.5 py-2 text-xs text-white placeholder:text-blue-100/50 outline-none focus:border-emerald-300"
+                                            />
+                                            <p className="mt-2 text-[10px] text-blue-100/70">
+                                                Project facts for this call come from selected project knowledge.
+                                            </p>
+                                        </div>
+                                    )}
                                     <div className="flex items-center gap-2 mt-6 bg-white/10 border border-white/10 px-4 py-2 rounded-full text-emerald-300 text-sm font-semibold max-w-[90%] flex-wrap justify-center">
                                         <span
                                             className={`w-2 h-2 rounded-full shrink-0 ${startingLiveCall ? 'bg-amber-400 animate-pulse' : isCallActive ? 'bg-emerald-400' : 'bg-slate-300'}`}
@@ -1429,6 +1468,11 @@ const SalesLeadWorkspace = () => {
                                             <div key={`${line.speaker}-${idx}`} className="text-xs text-left mb-1.5 last:mb-0">
                                                 <span className="font-bold text-white/90">{line.speaker}:</span>{' '}
                                                 <span className="text-blue-100/95">{line.text}</span>
+                                                {line.speaker === 'AI' && line.sourceLabel ? (
+                                                    <span className="ml-2 inline-flex items-center rounded-full border border-emerald-300/50 bg-emerald-500/20 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-emerald-100">
+                                                        Fact source: {line.sourceLabel}
+                                                    </span>
+                                                ) : null}
                                             </div>
                                         )) : (
                                             <p className="text-xs text-blue-100/80">Live call history appears here.</p>

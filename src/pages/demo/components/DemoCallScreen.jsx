@@ -3,6 +3,7 @@ import { PhoneOff, Mic, Volume2, User, Sparkles, Phone, LayoutDashboard, Refresh
 import { motion, AnimatePresence } from 'framer-motion';
 import { useNavigate } from 'react-router-dom';
 import api from '../../../lib/api';
+import { useProjects } from '../../../hooks/useProjects';
 
 const DemoCallScreen = ({ formData, onEndCall }) => {
     const [screenState, setScreenState] = useState('dialing'); // dialing | connected | summary
@@ -11,7 +12,16 @@ const DemoCallScreen = ({ formData, onEndCall }) => {
     const [isMuted, setIsMuted] = useState(false);
     const [session, setSession] = useState(null);
     const [enrichedAiIndexes, setEnrichedAiIndexes] = useState({});
+    const [selectedProjectId, setSelectedProjectId] = useState('');
+    const [agentName, setAgentName] = useState('SalesPal AI');
+    const { projects } = useProjects();
     const navigate = useNavigate();
+
+    useEffect(() => {
+        if (formData?.projectId && !selectedProjectId) {
+            setSelectedProjectId(formData.projectId);
+        }
+    }, [formData?.projectId, selectedProjectId]);
 
     // Generate a mock conversation based on their script
     const baseScript = formData.scriptContent ? formData.scriptContent.split('\n').filter(l => l.trim()) : [
@@ -20,12 +30,12 @@ const DemoCallScreen = ({ formData, onEndCall }) => {
     ];
 
     const [conversation, setConversation] = useState([
-        { role: 'ai', text: baseScript[0] || 'Hello, I am calling from SalesPal.' },
+        { role: 'ai', text: baseScript[0] || 'Hello, I am calling from SalesPal.', sourceLabel: '' },
         { role: 'user', text: 'Yes, tell me more about what you do.' },
-        { role: 'ai', text: baseScript[1] || 'We automate your lead follow-ups utilizing human-like conversational voice AI.' },
-        { role: 'ai', text: 'Our agents can qualify inbound interest and book appointments directly on your calendar, running 24/7. How does that sound?' },
+        { role: 'ai', text: baseScript[1] || 'We automate your lead follow-ups utilizing human-like conversational voice AI.', sourceLabel: '' },
+        { role: 'ai', text: 'Our agents can qualify inbound interest and book appointments directly on your calendar, running 24/7. How does that sound?', sourceLabel: '' },
         { role: 'user', text: 'Hmm, that actually sounds incredibly useful. Can you send me some details?' },
-        { role: 'ai', text: 'Absolutely! I will drop a demo link to your email right away. Have a great day!' }
+        { role: 'ai', text: 'Absolutely! I will drop a demo link to your email right away. Have a great day!', sourceLabel: '' }
     ]);
 
     useEffect(() => {
@@ -46,6 +56,8 @@ const DemoCallScreen = ({ formData, onEndCall }) => {
                     phone: formData.phone || '+1 (555) 000-0000',
                     name: formData.name || 'Demo User',
                     locale: 'hing',
+                    projectId: selectedProjectId || undefined,
+                    agentName: String(agentName || '').trim() || 'SalesPal AI',
                 });
                 setSession({
                     brandId: res?.brand_id || 'web-demo',
@@ -56,7 +68,11 @@ const DemoCallScreen = ({ formData, onEndCall }) => {
                     setConversation((prev) => {
                         const next = [...prev];
                         if (next[0]?.role === 'ai') {
-                            next[0] = { ...next[0], text: res.assistant_reply };
+                            next[0] = {
+                                ...next[0],
+                                text: res.assistant_reply,
+                                sourceLabel: selectedProjectId ? 'Project Knowledge (selected)' : '',
+                            };
                         }
                         return next;
                     });
@@ -66,7 +82,7 @@ const DemoCallScreen = ({ formData, onEndCall }) => {
             }
         };
         startVoiceSession();
-    }, [screenState, formData.phone, formData.name]);
+    }, [screenState, formData.phone, formData.name, selectedProjectId, agentName]);
 
     useEffect(() => {
         const enrichAssistantTurn = async () => {
@@ -90,7 +106,13 @@ const DemoCallScreen = ({ formData, onEndCall }) => {
                 if (reply) {
                     setConversation((prevConv) => {
                         const next = [...prevConv];
-                        if (next[activeMessage]) next[activeMessage] = { ...next[activeMessage], text: reply };
+                        if (next[activeMessage]) {
+                            next[activeMessage] = {
+                                ...next[activeMessage],
+                                text: reply,
+                                sourceLabel: turn?.fact_source?.label || '',
+                            };
+                        }
                         return next;
                     });
                 }
@@ -198,6 +220,30 @@ const DemoCallScreen = ({ formData, onEndCall }) => {
                                 <p className="text-white font-mono text-lg tracking-wider">{formData.phone || '+1 (555) 000-0000'}</p>
                             </div>
                         </div>
+                        <div className="mt-4 w-full bg-white/5 border border-white/10 px-4 py-3 rounded-2xl backdrop-blur-md text-left">
+                            <label className="text-[11px] uppercase tracking-wide text-slate-300 block mb-1.5">Project Brain</label>
+                            <select
+                                value={selectedProjectId}
+                                onChange={(e) => setSelectedProjectId(e.target.value)}
+                                className="w-full bg-slate-800 border border-slate-600 text-white text-sm rounded-md px-2.5 py-2 outline-none"
+                            >
+                                <option value="">No project selected</option>
+                                {projects.map((project) => (
+                                    <option key={project.id} value={project.id}>
+                                        {project.name}
+                                    </option>
+                                ))}
+                            </select>
+                            <label className="text-[11px] uppercase tracking-wide text-slate-300 block mb-1.5 mt-3">Agent Name</label>
+                            <input
+                                type="text"
+                                value={agentName}
+                                onChange={(e) => setAgentName(String(e.target.value || '').slice(0, 40))}
+                                maxLength={40}
+                                className="w-full bg-slate-800 border border-slate-600 text-white text-sm rounded-md px-2.5 py-2 outline-none placeholder:text-slate-500"
+                                placeholder="SalesPal AI"
+                            />
+                        </div>
                     </motion.div>
                 )}
 
@@ -281,6 +327,11 @@ const DemoCallScreen = ({ formData, onEndCall }) => {
                                                     msg.text
                                                 )}
                                             </p>
+                                            {isAI && msg.sourceLabel ? (
+                                                <div className="mt-2 text-[10px] uppercase tracking-wide text-emerald-300">
+                                                    Fact source: {msg.sourceLabel}
+                                                </div>
+                                            ) : null}
                                         </div>
                                     </motion.div>
                                 );
