@@ -538,6 +538,7 @@ const StepAdCreation = ({ onComplete, onUpdate, onBack, data }) => {
 
     const [isGenerating, setIsGenerating] = useState(false);
     const [numberOfImages, setNumberOfImages] = useState(1);
+    const [videoDurationSec, setVideoDurationSec] = useState(data?.adSettings?.videoDurationSec || 12);
     const [selectedAdFormat, setSelectedAdFormat] = useState('carousel');
     const [showPromotePosts, setShowPromotePosts] = useState(false);
 
@@ -572,10 +573,11 @@ const StepAdCreation = ({ onComplete, onUpdate, onBack, data }) => {
                     campaigns: selectedCampaigns.map(i => campaigns[i]).filter(Boolean),
                     generatedAds,
                     selectedAdFormat,
+                    videoDurationSec,
                 }
             });
         }
-    }, [selectedCampaigns, selectedPlatforms, campaigns, generatedAds, selectedAdFormat, onUpdate]);
+    }, [selectedCampaigns, selectedPlatforms, campaigns, generatedAds, selectedAdFormat, videoDurationSec, onUpdate]);
 
     // ── Handlers ─────────────────────────────────────────────────────────────
     const updateCampaignField = (index, field, value) => {
@@ -619,6 +621,7 @@ const StepAdCreation = ({ onComplete, onUpdate, onBack, data }) => {
                 selectedCampaigns: selectedCampaignPayload,
                 selectedAdFormat,
                 carouselSlides: selectedAdFormat === 'carousel' || selectedAdFormat === 'video' ? 6 : undefined,
+                videoDurationSec,
             });
 
             const payload = response?.data != null ? response.data : response;
@@ -677,6 +680,7 @@ const StepAdCreation = ({ onComplete, onUpdate, onBack, data }) => {
                     generatedAds,
                     chosenCampaign: generatedAds.campaigns[selectedCampaign],
                     selectedAdFormat,
+                    videoDurationSec,
                 }
             });
         }
@@ -1022,6 +1026,7 @@ const StepAdCreation = ({ onComplete, onUpdate, onBack, data }) => {
                         <GeneratedCreativesPanel
                             chosenCampaign={adCampaigns[selectedCampaign]}
                             selectedAdFormat={selectedAdFormat}
+                            videoDurationSec={videoDurationSec}
                         />
                     </div>
                 )}
@@ -1432,10 +1437,11 @@ const StepAdCreation = ({ onComplete, onUpdate, onBack, data }) => {
 
                 {/* ─── SECTION 4: GENERATE ───────────────────────────────────── */}
                 <div className="bg-linear-to-br from-gray-50 to-slate-50 rounded-2xl border border-gray-200 p-5 md:p-6 mt-8">
-                    {/* Image count selector */}
-                    <div className="mb-5">
+                    {/* Image count selector + video duration */}
+                    <div className="mb-5 grid grid-cols-1 md:grid-cols-2 gap-5">
+                        <div>
                         <label className="text-[13px] font-medium text-gray-800 mb-2.5 block">Number of ad creatives to generate</label>
-                        <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-2 flex-wrap">
                             {[1, 2, 3, 4].map((num) => (
                                 <button
                                     key={num}
@@ -1457,6 +1463,31 @@ const StepAdCreation = ({ onComplete, onUpdate, onBack, data }) => {
                                     )}
                                 </button>
                             ))}
+                        </div>
+                        </div>
+                        <div>
+                            <label className="text-[13px] font-medium text-gray-800 mb-2.5 block">Video duration</label>
+                            <div className="flex items-center gap-2 flex-wrap">
+                                {[8, 12, 15, 20, 30].map((sec) => (
+                                    <button
+                                        key={sec}
+                                        type="button"
+                                        onClick={() => setVideoDurationSec(sec)}
+                                        className={`
+                                            px-4 py-2 rounded-xl text-[13px] font-semibold transition-all duration-200 cursor-pointer border-2
+                                            ${videoDurationSec === sec
+                                                ? 'bg-purple-600 text-white border-purple-600 shadow-md'
+                                                : 'bg-white text-gray-600 border-gray-200 hover:border-purple-300 hover:bg-purple-50'
+                                            }
+                                        `}
+                                    >
+                                        {sec}s
+                                    </button>
+                                ))}
+                            </div>
+                            <p className="text-[11px] text-gray-400 mt-1.5">
+                                Generated preview video will play for about {videoDurationSec} seconds.
+                            </p>
                         </div>
                         <p className="text-[11px] text-gray-400 mt-1.5">
                             {selectedAdFormat === 'carousel' || selectedAdFormat === 'video' ? (

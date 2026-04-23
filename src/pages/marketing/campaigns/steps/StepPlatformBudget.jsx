@@ -631,6 +631,7 @@ const StepPlatformBudget = ({ onComplete, onUpdate, onBack, data }) => {
                             <GeneratedCreativesPanel
                                 chosenCampaign={data.adSettings.chosenCampaign}
                                 selectedAdFormat={data.adSettings.selectedAdFormat || 'image'}
+                                videoDurationSec={data.adSettings.videoDurationSec || 12}
                             />
                         )}
 

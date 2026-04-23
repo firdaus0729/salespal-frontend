@@ -5,13 +5,21 @@ import CreativeVideoFromImages from './CreativeVideoFromImages';
 /**
  * Shows hero image, horizontal carousel of slides, and buildable slideshow video.
  */
-export default function GeneratedCreativesPanel({ chosenCampaign, selectedAdFormat }) {
+export default function GeneratedCreativesPanel({ chosenCampaign, selectedAdFormat, videoDurationSec = 12 }) {
   if (!chosenCampaign) return null;
 
   const slides =
     (chosenCampaign.carouselImages?.length && chosenCampaign.carouselImages) ||
     chosenCampaign.images ||
     [chosenCampaign.imageUrl || chosenCampaign.image].filter(Boolean);
+  const videoPrompt = [
+    `Brand campaign: ${chosenCampaign.campaignName || chosenCampaign.campaignTitle || 'Campaign'}`,
+    `Primary message: ${chosenCampaign.primaryText || chosenCampaign.descriptions?.[0] || ''}`,
+    `Headline: ${chosenCampaign.headlines?.[0] || ''}`,
+    'Create a lifelike, dynamic promotional video with natural movement and human presence.',
+  ]
+    .filter(Boolean)
+    .join('\n');
 
   if (!slides.length) {
     return (
@@ -33,6 +41,8 @@ export default function GeneratedCreativesPanel({ chosenCampaign, selectedAdForm
           Format: <span className="font-medium text-gray-700">{selectedAdFormat || 'image'}</span>
           {' · '}
           {slides.length} slide{slides.length !== 1 ? 's' : ''}
+          {' · '}
+          Video {videoDurationSec}s
         </p>
       </div>
 
@@ -76,7 +86,11 @@ export default function GeneratedCreativesPanel({ chosenCampaign, selectedAdForm
             <Video className="w-3 h-3" />
             Video preview
           </p>
-          <CreativeVideoFromImages imageUrls={slides} />
+          <CreativeVideoFromImages
+            imageUrls={slides}
+            durationSec={videoDurationSec}
+            videoPrompt={videoPrompt}
+          />
         </div>
       </div>
     </div>
