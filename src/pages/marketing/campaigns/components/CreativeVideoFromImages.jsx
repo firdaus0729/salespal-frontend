@@ -45,6 +45,7 @@ export default function CreativeVideoFromImages({
           'Create a realistic, lifelike promotional video with dynamic motion and natural human presence.';
 
         let remoteVideo = null;
+        let remoteError = '';
         try {
           const job = await api.post('/ai/video/jobs', {
             prompt: promptText,
@@ -72,6 +73,7 @@ export default function CreativeVideoFromImages({
                 break;
               }
               if (state === 'failed' || state === 'error') {
+                remoteError = s?.error || s?.result?.error || 'AI provider failed to generate video';
                 break;
               }
               await new Promise((r) => setTimeout(r, 3500));
@@ -91,7 +93,10 @@ export default function CreativeVideoFromImages({
         }
 
         if (requireAiVideo) {
-          throw new Error('AI video generation failed. Configure video provider/model and retry.');
+          throw new Error(
+            remoteError ||
+              'AI video generation failed. Check provider/model configuration and credits, then retry.'
+          );
         }
 
         objectUrl = await createSlideshowVideo(urls, {

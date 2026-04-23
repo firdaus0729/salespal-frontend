@@ -90,7 +90,7 @@ export default function GeneratedCreativesPanel({ chosenCampaign, selectedAdForm
             imageUrls={slides}
             durationSec={videoDurationSec}
             videoPrompt={videoPrompt}
-            requireAiVideo={selectedAdFormat === 'video'}
+            requireAiVideo={true}
           />
         </div>
       </div>
